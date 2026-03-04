@@ -1,0 +1,302 @@
+import React, { useEffect, useState, useCallback, useRef } from 'react';
+import { useParams, Link } from 'react-router-dom';
+import { useEditor, EditorContent } from '@tiptap/react';
+import StarterKit from '@tiptap/starter-kit';
+import Image from '@tiptap/extension-image';
+import Placeholder from '@tiptap/extension-placeholder';
+import { getNote, updateNote, submitVideo } from '../api.js';
+import { SocialVideoBlock, detectSocialPlatform } from '../components/SocialVideoExtension.jsx';
+import VideoPane from '../components/VideoPane.jsx';
+
+const SAVE_DEBOUNCE_MS = 1200;
+
+function ToolbarBtn({ active, onClick, children, title }) {
+  return (
+    <button
+      onMouseDown={(e) => { e.preventDefault(); onClick(); }}
+      title={title}
+      style={{
+        background: active ? 'var(--color-black)' : 'transparent',
+        color: active ? 'var(--color-white)' : 'var(--color-black)',
+        border: 'none',
+        padding: '5px 9px',
+        fontSize: '12px',
+        fontFamily: 'var(--font-mono)',
+        letterSpacing: 0,
+        cursor: 'pointer',
+        textTransform: 'none',
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+function Toolbar({ editor }) {
+  if (!editor) return null;
+  return (
+    <div style={{
+      display: 'flex',
+      gap: '1px',
+      padding: '6px 16px',
+      borderBottom: 'var(--border)',
+      background: 'var(--color-white)',
+      flexShrink: 0,
+      flexWrap: 'wrap',
+      alignItems: 'center',
+    }}>
+      <ToolbarBtn active={editor.isActive('heading', { level: 1 })} onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()} title="H1">H1</ToolbarBtn>
+      <ToolbarBtn active={editor.isActive('heading', { level: 2 })} onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()} title="H2">H2</ToolbarBtn>
+      <ToolbarBtn active={editor.isActive('heading', { level: 3 })} onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()} title="H3">H3</ToolbarBtn>
+      <div style={{ width: '1px', height: '20px', background: 'var(--color-border)', margin: '0 4px' }} />
+      <ToolbarBtn active={editor.isActive('bold')} onClick={() => editor.chain().focus().toggleBold().run()} title="Bold"><strong>B</strong></ToolbarBtn>
+      <ToolbarBtn active={editor.isActive('italic')} onClick={() => editor.chain().focus().toggleItalic().run()} title="Italic"><em>I</em></ToolbarBtn>
+      <ToolbarBtn active={editor.isActive('code')} onClick={() => editor.chain().focus().toggleCode().run()} title="Inline code">`</ToolbarBtn>
+      <div style={{ width: '1px', height: '20px', background: 'var(--color-border)', margin: '0 4px' }} />
+      <ToolbarBtn active={editor.isActive('bulletList')} onClick={() => editor.chain().focus().toggleBulletList().run()} title="Bullet list">•</ToolbarBtn>
+      <ToolbarBtn active={editor.isActive('orderedList')} onClick={() => editor.chain().focus().toggleOrderedList().run()} title="Ordered list">1.</ToolbarBtn>
+      <ToolbarBtn active={editor.isActive('blockquote')} onClick={() => editor.chain().focus().toggleBlockquote().run()} title="Quote">"</ToolbarBtn>
+      <ToolbarBtn active={false} onClick={() => editor.chain().focus().setHorizontalRule().run()} title="Divider">—</ToolbarBtn>
+    </div>
+  );
+}
+
+export default function NoteEditor() {
+  const { id } = useParams();
+  const [title, setTitle] = useState('');
+  const [saveStatus, setSaveStatus] = useState('saved'); // 'saved' | 'saving' | 'unsaved'
+  const [videoPane, setVideoPane] = useState(null); // videoId or null
+  const [loadingVideo, setLoadingVideo] = useState(false);
+  const saveTimer = useRef(null);
+  const initialLoadDone = useRef(false);
+
+  const handleVideoClick = useCallback((videoId) => {
+    setVideoPane(videoId);
+  }, []);
+
+  const editor = useEditor({
+    extensions: [
+      StarterKit.configure({ heading: { levels: [1, 2, 3] } }),
+      Image.configure({ inline: false, allowBase64: true }),
+      Placeholder.configure({
+        placeholder: 'Start writing… Paste an Instagram or TikTok link to embed a video.',
+      }),
+      SocialVideoBlock.configure({
+        onVideoClick: handleVideoClick,
+      }),
+    ],
+    content: '',
+    onUpdate: ({ editor }) => {
+      if (!initialLoadDone.current) return;
+      setSaveStatus('unsaved');
+      clearTimeout(saveTimer.current);
+      saveTimer.current = setTimeout(() => {
+        doSave(editor.getJSON());
+      }, SAVE_DEBOUNCE_MS);
+    },
+    editorProps: {
+      handlePaste(view, event) {
+        const text = event.clipboardData?.getData('text/plain');
+        if (!text) return false;
+
+        const lines = text.split('\n');
+        const socialLines = lines.filter((l) => detectSocialPlatform(l.trim()));
+        if (socialLines.length === 0) return false;
+
+        // We have at least one social URL — take over the entire paste
+        event.preventDefault();
+
+        const schema = view.state.schema;
+        const nodes = [];
+        let textBuffer = [];
+
+        function flushText() {
+          const joined = textBuffer.join('\n');
+          // Split on double newlines for paragraph breaks
+          const paras = joined.split(/\n{2,}/);
+          for (const para of paras) {
+            const trimmed = para.trim();
+            if (trimmed) {
+              try {
+                nodes.push(schema.nodes.paragraph.create(null, schema.text(trimmed)));
+              } catch {
+                nodes.push(schema.nodes.paragraph.create());
+              }
+            }
+          }
+          textBuffer = [];
+        }
+
+        const socialUrlsToSubmit = [];
+
+        for (const rawLine of lines) {
+          const line = rawLine.trim();
+          const platform = detectSocialPlatform(line);
+          if (platform && line) {
+            flushText();
+            nodes.push(schema.nodes.socialVideoBlock.create({
+              url: line,
+              platform,
+              videoId: null,
+              status: 'pending',
+            }));
+            socialUrlsToSubmit.push(line);
+          } else {
+            textBuffer.push(rawLine);
+          }
+        }
+        flushText();
+
+        if (nodes.length === 0) return false;
+
+        const { tr } = view.state;
+        const { from, to } = tr.selection;
+        tr.replaceWith(from, to, nodes);
+        view.dispatch(tr);
+
+        // Submit all social URLs to backend and patch nodes with returned IDs
+        for (const url of socialUrlsToSubmit) {
+          submitVideo(url).then(({ id: videoId }) => {
+            view.state.doc.descendants((node, pos) => {
+              if (
+                node.type.name === 'socialVideoBlock' &&
+                node.attrs.url === url &&
+                !node.attrs.videoId
+              ) {
+                view.dispatch(
+                  view.state.tr.setNodeMarkup(pos, null, {
+                    ...node.attrs,
+                    videoId,
+                    status: 'pending',
+                  })
+                );
+                return false;
+              }
+            });
+          }).catch(console.error);
+        }
+
+        return true;
+      },
+    },
+  });
+
+  // Load note
+  useEffect(() => {
+    if (!editor) return;
+    getNote(id).then((note) => {
+      setTitle(note.title || '');
+      try {
+        const content = JSON.parse(note.content);
+        editor.commands.setContent(content);
+      } catch {
+        editor.commands.setContent('');
+      }
+      initialLoadDone.current = true;
+      setSaveStatus('saved');
+    }).catch(console.error);
+  }, [id, editor]);
+
+  async function doSave(content) {
+    setSaveStatus('saving');
+    try {
+      await updateNote(id, {
+        title,
+        content: JSON.stringify(content),
+      });
+      setSaveStatus('saved');
+    } catch {
+      setSaveStatus('unsaved');
+    }
+  }
+
+  function handleTitleChange(e) {
+    setTitle(e.target.value);
+    if (!initialLoadDone.current) return;
+    setSaveStatus('unsaved');
+    clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      if (editor) doSave(editor.getJSON());
+    }, SAVE_DEBOUNCE_MS);
+  }
+
+  function handleTitleKeyDown(e) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      editor?.commands.focus();
+    }
+  }
+
+  return (
+    <div style={{
+      display: 'flex',
+      flexDirection: 'column',
+      height: '100vh',
+      background: 'var(--color-bg)',
+    }}>
+      {/* Editor header */}
+      <div style={{
+        background: 'var(--color-white)',
+        borderBottom: 'var(--border)',
+        padding: '10px 24px',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '16px',
+        flexShrink: 0,
+      }}>
+        <Link to="/notes" style={{
+          fontFamily: 'var(--font-mono)',
+          fontSize: '9px',
+          letterSpacing: '0.06em',
+          textTransform: 'uppercase',
+          color: 'var(--color-muted)',
+          textDecoration: 'none',
+          whiteSpace: 'nowrap',
+        }}>
+          ← Notes
+        </Link>
+        <input
+          value={title}
+          onChange={handleTitleChange}
+          onKeyDown={handleTitleKeyDown}
+          placeholder="Note title"
+          style={{
+            flex: 1,
+            border: 'none',
+            background: 'transparent',
+            fontFamily: 'var(--font-mono)',
+            fontSize: '13px',
+            fontWeight: 700,
+            letterSpacing: '0.04em',
+            textTransform: 'uppercase',
+            outline: 'none',
+            padding: 0,
+          }}
+        />
+        <span className="label" style={{ whiteSpace: 'nowrap', minWidth: '50px', textAlign: 'right' }}>
+          {saveStatus === 'saving' ? 'Saving…' : saveStatus === 'unsaved' ? '●' : 'Saved'}
+        </span>
+      </div>
+
+      <Toolbar editor={editor} />
+
+      {/* Editor body */}
+      <div style={{
+        flex: 1,
+        overflowY: 'auto',
+        display: 'flex',
+        justifyContent: 'center',
+        padding: '40px 24px',
+      }}>
+        <div style={{ width: '100%', maxWidth: '720px' }}>
+          <EditorContent editor={editor} />
+        </div>
+      </div>
+
+      {/* VideoPane overlay */}
+      {videoPane && (
+        <VideoPane videoId={videoPane} onClose={() => setVideoPane(null)} />
+      )}
+    </div>
+  );
+}
