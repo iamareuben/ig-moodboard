@@ -12,7 +12,7 @@ import {
 } from '../services/storage.js';
 import { extractFrameAtTime } from '../services/shotDetector.js';
 import { canonicalizeUrl } from '../services/canonicalize.js';
-import { getNotesForVideo } from '../services/db.js';
+import { getNotesForVideo, getVideoIdsInNotes } from '../services/db.js';
 import { downloadAndProcess } from '../services/pipeline.js';
 
 const router = Router();
@@ -101,6 +101,7 @@ router.post('/', async (req, res) => {
 // GET /api/videos — list all
 router.get('/', async (req, res) => {
   const manifests = await listManifests();
+  const inNoteSet = getVideoIdsInNotes();
   const summaries = manifests.map(({ shots, ...rest }) => ({
     ...rest,
     shotCount: shots ? shots.length : 0,
@@ -109,8 +110,37 @@ router.get('/', async (req, res) => {
       const hero = shots.find((s) => s.id === rest.heroShotId) || shots[0];
       return hero ? hero.frameFile : null;
     })(),
+    inNote: inNoteSet.has(rest.id),
+    annotationCount: rest.annotations?.length ?? 0,
   }));
   res.json(summaries);
+});
+
+// GET /api/videos/search?q= — search by title, username, annotation content
+router.get('/search', async (req, res) => {
+  const q = (req.query.q || '').toLowerCase().trim();
+  const manifests = await listManifests();
+  const results = manifests
+    .filter((m) => {
+      if (!q) return true;
+      const title = (m.title || '').toLowerCase();
+      const username = (m.accountUsername || '').toLowerCase();
+      const annotations = (m.annotations || []).map((a) => a.content.toLowerCase()).join(' ');
+      return title.includes(q) || username.includes(q) || annotations.includes(q);
+    })
+    .map((m) => {
+      const hero = m.shots?.find((s) => s.id === m.heroShotId) || m.shots?.[0];
+      return {
+        id: m.id,
+        title: m.title,
+        accountUsername: m.accountUsername,
+        platform: m.platform,
+        url: m.url,
+        heroFrame: hero?.frameFile || null,
+        annotationCount: m.annotations?.length ?? 0,
+      };
+    });
+  res.json(results);
 });
 
 // GET /api/videos/:id — full manifest + backlinks
@@ -118,7 +148,7 @@ router.get('/:id', async (req, res) => {
   try {
     const manifest = await readManifest(req.params.id);
     const backlinks = getNotesForVideo(req.params.id);
-    res.json({ ...manifest, backlinks });
+    res.json({ ...manifest, backlinks, annotationCount: manifest.annotations?.length ?? 0 });
   } catch {
     res.status(404).json({ error: 'Video not found' });
   }
@@ -140,6 +170,19 @@ router.patch('/:id', async (req, res) => {
     }
     await writeManifest(req.params.id, manifest);
     res.json(manifest);
+  } catch {
+    res.status(404).json({ error: 'Video not found' });
+  }
+});
+
+// POST /api/videos/:id/archive — mark as archived (hidden from library)
+router.post('/:id/archive', async (req, res) => {
+  try {
+    const manifest = await readManifest(req.params.id);
+    manifest.status = 'archived';
+    manifest.error = null;
+    await writeManifest(req.params.id, manifest);
+    res.json({ id: manifest.id, status: 'archived' });
   } catch {
     res.status(404).json({ error: 'Video not found' });
   }
@@ -243,6 +286,52 @@ router.delete('/:id/shots/:shotId', async (req, res) => {
       manifest.heroShotId = null;
     }
 
+    await writeManifest(req.params.id, manifest);
+    res.json({ ok: true });
+  } catch {
+    res.status(404).json({ error: 'Video not found' });
+  }
+});
+
+// GET /api/videos/:id/annotations
+router.get('/:id/annotations', async (req, res) => {
+  try {
+    const manifest = await readManifest(req.params.id);
+    res.json(manifest.annotations ?? []);
+  } catch {
+    res.status(404).json({ error: 'Video not found' });
+  }
+});
+
+// POST /api/videos/:id/annotations
+router.post('/:id/annotations', async (req, res) => {
+  try {
+    const manifest = await readManifest(req.params.id);
+    const { content } = req.body;
+    if (!content) return res.status(400).json({ error: 'content is required' });
+    if (!manifest.annotations) manifest.annotations = [];
+    const annotation = {
+      id: randomUUID(),
+      content,
+      source: 'user',
+      createdAt: new Date().toISOString(),
+    };
+    manifest.annotations.push(annotation);
+    await writeManifest(req.params.id, manifest);
+    res.status(201).json(annotation);
+  } catch {
+    res.status(404).json({ error: 'Video not found' });
+  }
+});
+
+// DELETE /api/videos/:id/annotations/:annotationId
+router.delete('/:id/annotations/:annotationId', async (req, res) => {
+  try {
+    const manifest = await readManifest(req.params.id);
+    if (!manifest.annotations) return res.status(404).json({ error: 'Annotation not found' });
+    const idx = manifest.annotations.findIndex((a) => a.id === req.params.annotationId);
+    if (idx === -1) return res.status(404).json({ error: 'Annotation not found' });
+    manifest.annotations.splice(idx, 1);
     await writeManifest(req.params.id, manifest);
     res.json({ ok: true });
   } catch {

@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { useParams, Link } from 'react-router-dom';
-import { getVideo, updateVideo, addShot, updateShot, deleteShot, parseAccount, retryVideo } from '../api.js';
+import { useParams, Link, useNavigate } from 'react-router-dom';
+import { getVideo, updateVideo, addShot, updateShot, deleteShot, parseAccount, retryVideo, archiveVideo, listVideos } from '../api.js';
 import ShotGrid from '../components/ShotGrid.jsx';
 import CardPreview from '../components/CardPreview.jsx';
 import ShotModal from '../components/ShotModal.jsx';
@@ -8,7 +8,9 @@ import TagInput from '../components/TagInput.jsx';
 
 export default function VideoEditor() {
   const { id } = useParams();
+  const navigate = useNavigate();
   const [video, setVideo] = useState(null);
+  const [siblings, setSiblings] = useState([]); // ordered list of video ids for prev/next
   const [activeShotIndex, setActiveShotIndex] = useState(null);
   const [showCard, setShowCard] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -28,6 +30,14 @@ export default function VideoEditor() {
   }, [id, titleEditing]);
 
   useEffect(() => { fetchVideo(); }, [fetchVideo]);
+
+  useEffect(() => {
+    listVideos()
+      .then((all) => setSiblings(
+        all.filter((v) => v.status !== 'not_video' && v.status !== 'archived').map((v) => v.id)
+      ))
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (!video || video.status === 'ready' || video.status === 'error') return;
@@ -63,6 +73,16 @@ export default function VideoEditor() {
     try {
       await retryVideo(id);
       await fetchVideo();
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  async function handleArchive() {
+    if (!confirm('Archive this video? It will be hidden from the library.')) return;
+    try {
+      await archiveVideo(id);
+      navigate('/');
     } catch (err) {
       console.error(err);
     }
@@ -114,6 +134,29 @@ export default function VideoEditor() {
         >
           ← Library
         </Link>
+
+        {siblings.length > 1 && (() => {
+          const idx = siblings.indexOf(id);
+          const prevId = idx > 0 ? siblings[idx - 1] : null;
+          const nextId = idx < siblings.length - 1 ? siblings[idx + 1] : null;
+          const navStyle = (disabled) => ({
+            fontFamily: 'var(--font-mono)',
+            fontSize: '14px',
+            lineHeight: 1,
+            padding: '0 6px',
+            background: 'transparent',
+            border: 'none',
+            color: disabled ? 'var(--color-border)' : 'var(--color-muted)',
+            cursor: disabled ? 'default' : 'pointer',
+            flexShrink: 0,
+          });
+          return (
+            <>
+              <button style={navStyle(!prevId)} disabled={!prevId} onClick={() => prevId && navigate(`/video/${prevId}`)}>↑</button>
+              <button style={navStyle(!nextId)} disabled={!nextId} onClick={() => nextId && navigate(`/video/${nextId}`)}>↓</button>
+            </>
+          );
+        })()}
 
         <div style={{ width: '1px', height: '20px', background: 'var(--color-border)', flexShrink: 0 }} />
 
@@ -191,7 +234,9 @@ export default function VideoEditor() {
           </div>
         )}
 
-        <span className={`badge ${video.status}`} style={{ flexShrink: 0 }}>{video.status}</span>
+        <span className={`badge ${video.status}`} style={{ flexShrink: 0 }}>
+          {video.isCarousel ? 'carousel' : video.status}
+        </span>
 
         {(video.status === 'error' || video.status === 'processing') && (
           <button style={{ flexShrink: 0 }} onClick={handleRetry}>↻ Retry</button>
@@ -199,10 +244,19 @@ export default function VideoEditor() {
 
         {video.status === 'ready' && (
           <>
-            <button style={{ flexShrink: 0 }} onClick={() => setActiveShotIndex(-1)}>+ Shot</button>
+            {!video.isCarousel && (
+              <button style={{ flexShrink: 0 }} onClick={() => setActiveShotIndex(-1)}>+ Shot</button>
+            )}
             <button style={{ flexShrink: 0 }} onClick={() => setShowCard(true)}>Card Preview</button>
           </>
         )}
+
+        <button
+          style={{ flexShrink: 0, color: 'var(--color-muted)', borderColor: 'var(--color-border)' }}
+          onClick={handleArchive}
+        >
+          Archive
+        </button>
       </header>
 
       {/* Stats + backlinks strip */}
@@ -306,6 +360,7 @@ export default function VideoEditor() {
           shots={video.shots || []}
           videoId={id}
           heroShotId={video.heroShotId}
+          isCarousel={video.isCarousel}
           onOpenModal={(index) => setActiveShotIndex(index)}
           onSetHero={handleSetHero}
           onDelete={handleDeleteShot}

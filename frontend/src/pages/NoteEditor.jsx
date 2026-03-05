@@ -4,8 +4,9 @@ import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Image from '@tiptap/extension-image';
 import Placeholder from '@tiptap/extension-placeholder';
-import { getNote, updateNote, submitVideo } from '../api.js';
+import { getNote, updateNote, submitVideo, listVideos } from '../api.js';
 import { SocialVideoBlock, detectSocialPlatform } from '../components/SocialVideoExtension.jsx';
+import { buildVideoFinderExtension } from '../components/VideoFinderExtension.js';
 import VideoPane from '../components/VideoPane.jsx';
 
 const SAVE_DEBOUNCE_MS = 1200;
@@ -67,6 +68,7 @@ export default function NoteEditor() {
   const [saveStatus, setSaveStatus] = useState('saved'); // 'saved' | 'saving' | 'unsaved'
   const [videoPane, setVideoPane] = useState(null); // videoId or null
   const [loadingVideo, setLoadingVideo] = useState(false);
+  const videoListRef = useRef([]);
   const saveTimer = useRef(null);
   const initialLoadDone = useRef(false);
 
@@ -74,16 +76,24 @@ export default function NoteEditor() {
     setVideoPane(videoId);
   }, []);
 
+  // Load video list for VideoFinder (use ref so extension always reads latest)
+  useEffect(() => {
+    listVideos().then((vids) => {
+      videoListRef.current = vids.filter((v) => v.status === 'ready');
+    }).catch(() => {});
+  }, []);
+
   const editor = useEditor({
     extensions: [
       StarterKit.configure({ heading: { levels: [1, 2, 3] } }),
       Image.configure({ inline: false, allowBase64: true }),
       Placeholder.configure({
-        placeholder: 'Start writing… Paste an Instagram or TikTok link to embed a video.',
+        placeholder: 'Start writing… Paste an Instagram or TikTok link to embed a video. Type / to find a saved video.',
       }),
       SocialVideoBlock.configure({
         onVideoClick: handleVideoClick,
       }),
+      buildVideoFinderExtension(() => videoListRef.current),
     ],
     content: '',
     onUpdate: ({ editor }) => {

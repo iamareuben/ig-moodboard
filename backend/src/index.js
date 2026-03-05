@@ -3,10 +3,12 @@ import cors from 'cors';
 import { VIDEOS_DIR } from './services/storage.js';
 import { listManifests } from './services/storage.js';
 import { downloadAndProcess } from './services/pipeline.js';
+import { initRetryQueue } from './services/retryQueue.js';
 import videosRouter from './routes/videos.js';
 import notesRouter from './routes/notes.js';
 import accountsRouter from './routes/accounts.js';
 import settingsRouter from './routes/settings.js';
+import importBookmarksRouter from './routes/importBookmarks.js';
 
 // Initialise DB (side-effect import creates tables)
 import './services/db.js';
@@ -19,6 +21,7 @@ app.use(express.json({ limit: '10mb' }));
 
 app.use('/media', express.static(VIDEOS_DIR));
 
+app.use('/api/videos/import-bookmarks', importBookmarksRouter);
 app.use('/api/videos', videosRouter);
 app.use('/api/notes', notesRouter);
 app.use('/api/accounts', accountsRouter);
@@ -41,4 +44,7 @@ app.listen(PORT, async () => {
   } catch (err) {
     console.error('[startup] Auto-retry scan failed:', err.message);
   }
+
+  // Schedule exponential-backoff retries for previously-failed downloads.
+  await initRetryQueue();
 });

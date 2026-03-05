@@ -14,40 +14,26 @@ function useViewport() {
 }
 
 // ─── column builder ────────────────────────────────────────────────────────────
-//
-// Shot heights (vh) cycle through this pattern, column by column, until
-// adding the next column would overflow the viewport width.
-// Width of each column = (shotHeight / 100) * viewportHeight * (9/16)
-//
-// Result: the layout fills the screen regardless of aspect ratio, and
-// each shot stays correctly sized relative to the viewport height.
 
 const HEIGHT_PATTERN = [70, 50, 35];
 
-function buildColumns(shots, heroShotId, vw, vh) {
-  // Sort by timestamp — hero pinned to position 0 for prominence
+function buildColumns(shots, heroShotId, vw, vh, shotRatio) {
   const byTime = [...shots].sort((a, b) => a.timestamp - b.timestamp);
   const hero   = shots.find(s => s.id === heroShotId) ?? byTime[0];
   const ordered = [hero, ...byTime.filter(s => s !== hero)];
 
-  // Grow the column list, one column per shot, until the next would overflow
   const colHeights = [];
-  let usedW = 4; // 2px padding on each side
+  let usedW = 4;
 
   for (let i = 0; i < ordered.length; i++) {
     const h   = HEIGHT_PATTERN[i % HEIGHT_PATTERN.length];
-    const w   = (h / 100) * vh * (9 / 16);
+    const w   = (h / 100) * vh * shotRatio;
     const gap = colHeights.length > 0 ? 2 : 0;
-
-    // Once we have at least one column, stop if the next one won't fit
     if (colHeights.length > 0 && usedW + gap + w > vw) break;
-
     colHeights.push(h);
     usedW += gap + w;
   }
 
-  // Round-robin across columns → left-to-right chronological reading
-  // Row 1: shots 0,1,2,3,4,5  Row 2: shots 6,7,8,9,10,11  etc.
   const cols = colHeights.map(h => ({ shotH: h, items: [] }));
   ordered.forEach((shot, i) => {
     cols[i % colHeights.length].items.push({ shot, idx: shots.indexOf(shot) });
@@ -58,7 +44,7 @@ function buildColumns(shots, heroShotId, vw, vh) {
 
 // ─── component ────────────────────────────────────────────────────────────────
 
-export default function ShotGrid({ shots, videoId, heroShotId, onOpenModal, onSetHero, onDelete }) {
+export default function ShotGrid({ shots, videoId, heroShotId, onOpenModal, onSetHero, onDelete, isCarousel }) {
   const { w: vw, h: vh } = useViewport();
 
   if (!shots || shots.length === 0) {
@@ -74,7 +60,13 @@ export default function ShotGrid({ shots, videoId, heroShotId, onOpenModal, onSe
     );
   }
 
-  const cols = buildColumns(shots, heroShotId, vw, vh);
+  // For carousels, use the actual image ratio from the first shot (all slides are the same ratio).
+  // Fall back to 9/16 if dimensions weren't stored (older manifests).
+  const shotRatio = isCarousel && shots[0]?.width && shots[0]?.height
+    ? shots[0].width / shots[0].height
+    : 9 / 16;
+
+  const cols = buildColumns(shots, heroShotId, vw, vh, shotRatio);
 
   return (
     <div style={{
@@ -89,7 +81,11 @@ export default function ShotGrid({ shots, videoId, heroShotId, onOpenModal, onSe
           {col.items.map(({ shot, idx }) => (
             <div
               key={shot.id}
-              style={{ height: `${col.shotH}vh`, aspectRatio: '9 / 16', flexShrink: 0 }}
+              style={{
+                height: `${col.shotH}vh`,
+                aspectRatio: `${shotRatio}`,
+                flexShrink: 0,
+              }}
             >
               <ShotCell
                 shot={shot}

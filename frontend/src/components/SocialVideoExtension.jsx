@@ -139,6 +139,11 @@ function SocialVideoBlockView({ node, updateAttributes, extension }) {
               {video.stats.likeCount != null && ` · ${Number(video.stats.likeCount).toLocaleString()} likes`}
             </p>
           )}
+          {(video?.annotationCount ?? 0) > 0 && (
+            <p className="label" style={{ fontSize: '8px', marginTop: '2px' }}>
+              {video.annotationCount} &#9998;
+            </p>
+          )}
         </div>
 
         {videoId && (

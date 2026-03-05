@@ -1,10 +1,11 @@
 import { readManifest, writeManifest, videoFile, framesDir } from './storage.js';
-import { downloadVideo, getVideoDuration, getVideoMetadata } from './downloader.js';
+import { downloadVideo, getVideoDuration, getVideoMetadata, downloadCarousel } from './downloader.js';
 import { detectShots } from './shotDetector.js';
 import { upsertAccount } from './db.js';
 import { extractAccountFromUrl } from './canonicalize.js';
+import { scheduleRetry, isPermanentError } from './retryQueue.js';
 
-export async function downloadAndProcess(id, url) {
+export async function downloadAndProcess(id, url, retryCount = 0) {
   try {
     const vFile = videoFile(id);
     const fDir = framesDir(id);
@@ -59,8 +60,40 @@ export async function downloadAndProcess(id, url) {
     finalManifest.duration = duration;
     finalManifest.shots = shots;
     finalManifest.heroShotId = heroShotId;
+    // Clear retry metadata on success
+    delete finalManifest.retryCount;
+    delete finalManifest.nextRetryAt;
     await writeManifest(id, finalManifest);
   } catch (err) {
+    // "No video formats found" = carousel or photo post — try downloading as images first
+    if (/No video formats found/i.test(err.message)) {
+      console.log(`[pipeline] ${id}: no video formats — attempting carousel image download`);
+      try {
+        const slides = await downloadCarousel(url, framesDir(id));
+        slides[0].isHero = true;
+        const manifest = await readManifest(id);
+        manifest.status = 'ready';
+        manifest.isCarousel = true;
+        manifest.duration = null;
+        manifest.shots = slides;
+        manifest.heroShotId = slides[0].id;
+        delete manifest.retryCount;
+        delete manifest.nextRetryAt;
+        await writeManifest(id, manifest);
+        console.log(`[pipeline] ${id}: carousel downloaded — ${slides.length} slides`);
+        return;
+      } catch (carouselErr) {
+        console.log(`[pipeline] ${id}: carousel download also failed (${carouselErr.message.slice(0, 120)}) — marking not_video`);
+        try {
+          const manifest = await readManifest(id);
+          manifest.status = 'not_video';
+          manifest.error = null;
+          await writeManifest(id, manifest);
+        } catch { /* ignore */ }
+        return;
+      }
+    }
+
     console.error(`[pipeline error] ${id}:`, err.message);
     try {
       const manifest = await readManifest(id);
@@ -69,6 +102,12 @@ export async function downloadAndProcess(id, url) {
       await writeManifest(id, manifest);
     } catch {
       // ignore secondary error
+    }
+
+    if (!isPermanentError(err.message)) {
+      scheduleRetry(id, url, retryCount);
+    } else {
+      console.log(`[pipeline] ${id}: permanent error, no retry — ${err.message.slice(0, 120)}`);
     }
   }
 }

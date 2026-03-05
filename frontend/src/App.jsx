@@ -1,5 +1,6 @@
-import React from 'react';
-import { BrowserRouter, Routes, Route, NavLink, useLocation } from 'react-router-dom';
+import React, { useEffect, useState } from 'react';
+import { BrowserRouter, Routes, Route, NavLink, useLocation, Link } from 'react-router-dom';
+import { getCookieStatus } from './api.js';
 import Library from './pages/Library.jsx';
 import VideoEditor from './pages/VideoEditor.jsx';
 import Notes from './pages/Notes.jsx';
@@ -7,6 +8,68 @@ import NoteEditor from './pages/NoteEditor.jsx';
 import Accounts from './pages/Accounts.jsx';
 import AccountDetail from './pages/AccountDetail.jsx';
 import Settings from './pages/Settings.jsx';
+
+const PLATFORM_LABELS = { tiktok: 'TikTok', instagram: 'Instagram' };
+
+function CookieBanner() {
+  const [issues, setIssues] = useState([]); // [{ platform, status }]
+
+  useEffect(() => {
+    let cancelled = false;
+    async function check() {
+      const status = await getCookieStatus().catch(() => ({}));
+      if (!cancelled) {
+        setIssues(Object.entries(status).map(([platform, s]) => ({ platform, status: s })));
+      }
+    }
+    check();
+    const interval = setInterval(check, 30_000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, []);
+
+  if (issues.length === 0) return null;
+
+  return (
+    <div style={{
+      background: '#1a1a1a',
+      color: '#fff',
+      padding: '8px 24px',
+      display: 'flex',
+      alignItems: 'center',
+      gap: '16px',
+      flexWrap: 'wrap',
+      fontFamily: 'var(--font-mono)',
+      fontSize: '10px',
+      letterSpacing: '0.04em',
+    }}>
+      <span style={{ color: '#f5a623', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+        ⚠ Downloads failing
+      </span>
+      {issues.map(({ platform, status }) => (
+        <span key={platform} style={{ color: '#ccc' }}>
+          {PLATFORM_LABELS[platform] || platform} cookies {status === 'invalid' ? 'expired' : 'missing'}
+        </span>
+      ))}
+      <Link
+        to="/settings"
+        style={{
+          marginLeft: 'auto',
+          color: '#fff',
+          fontFamily: 'var(--font-mono)',
+          fontSize: '10px',
+          letterSpacing: '0.08em',
+          textTransform: 'uppercase',
+          textDecoration: 'none',
+          border: '1px solid #555',
+          padding: '3px 12px',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        Update cookies →
+      </Link>
+    </div>
+  );
+}
 
 function Nav() {
   const location = useLocation();
@@ -78,6 +141,7 @@ export default function App() {
   return (
     <BrowserRouter>
       <Nav />
+      <CookieBanner />
       <Routes>
         <Route path="/" element={<Library />} />
         <Route path="/video/:id" element={<VideoEditor />} />

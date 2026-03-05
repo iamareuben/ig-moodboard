@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
-import { listVideos, frameFileUrl, parseAccount, retryVideo } from '../api.js';
+import { listVideos, frameFileUrl, parseAccount, retryVideo, syncIgBookmarks } from '../api.js';
 import AddVideoModal from '../components/AddVideoModal.jsx';
 import VideoPane from '../components/VideoPane.jsx';
 
@@ -160,6 +160,9 @@ export default function Library() {
   const [showModal, setShowModal] = useState(false);
   const [loading, setLoading] = useState(true);
   const [previewVideoId, setPreviewVideoId] = useState(null);
+  const [noteFilter, setNoteFilter] = useState('all'); // 'all' | 'in-note' | 'not-in-note'
+  const [importStatus, setImportStatus] = useState(null); // null | { state: 'loading'|'done'|'error', msg }
+  const [syncing, setSyncing] = useState(false);
 
   const fetchVideos = useCallback(async () => {
     try {
@@ -195,21 +198,104 @@ export default function Library() {
     }
   }
 
+  async function handleSyncIg() {
+    if (syncing) return;
+    setSyncing(true);
+    setImportStatus({ state: 'loading', msg: 'Fetching IG saved posts…' });
+    try {
+      const result = await syncIgBookmarks();
+      setImportStatus({
+        state: 'done',
+        msg: `Synced ${result.total} saved posts — ${result.submitted} new, ${result.existing} already saved${result.skipped > 0 ? `, ${result.skipped} skipped` : ''}`,
+      });
+      if (result.submitted > 0) fetchVideos();
+    } catch (err) {
+      setImportStatus({ state: 'error', msg: `Error: ${err.message}` });
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  const photoCount = videos.filter((v) => v.status === 'not_video').length;
+  const videoOnlyVideos = videos.filter((v) => v.status !== 'not_video' && v.status !== 'archived');
+
+  const filteredVideos = videoOnlyVideos.filter((v) => {
+    if (noteFilter === 'in-note') return v.inNote;
+    if (noteFilter === 'not-in-note') return !v.inNote;
+    return true;
+  });
+
   return (
     <div style={{ minHeight: '100vh', background: 'var(--color-bg)' }}>
       <div style={{
-        padding: '16px 24px',
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        borderBottom: 'var(--border)', background: 'var(--color-white)',
+        padding: '12px 24px',
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px',
+        borderBottom: 'var(--border)', background: 'var(--color-white)', flexWrap: 'wrap',
       }}>
-        <span className="label">{videos.length} video{videos.length !== 1 ? 's' : ''}</span>
-        <button className="primary" onClick={() => setShowModal(true)}>+ Add Video</button>
+        <span className="label">
+          {filteredVideos.length}/{videoOnlyVideos.length} video{videoOnlyVideos.length !== 1 ? 's' : ''}
+          {photoCount > 0 && (
+            <span style={{ color: 'var(--color-muted)', marginLeft: '8px' }}>
+              · {photoCount} photo post{photoCount !== 1 ? 's' : ''} hidden
+            </span>
+          )}
+        </span>
+
+        {/* Filter pills */}
+        <div style={{ display: 'flex', gap: '4px' }}>
+          {['all', 'in-note', 'not-in-note'].map((f) => (
+            <button
+              key={f}
+              onClick={() => setNoteFilter(f)}
+              style={{
+                fontFamily: 'var(--font-mono)',
+                fontSize: '8px',
+                letterSpacing: '0.06em',
+                textTransform: 'uppercase',
+                padding: '4px 10px',
+                border: 'var(--border)',
+                background: noteFilter === f ? 'var(--color-black)' : 'transparent',
+                color: noteFilter === f ? 'var(--color-white)' : 'var(--color-black)',
+                cursor: 'pointer',
+              }}
+            >
+              {f === 'all' ? 'All' : f === 'in-note' ? 'In a note' : 'Not in a note'}
+            </button>
+          ))}
+        </div>
+
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          <button onClick={handleSyncIg} disabled={syncing}>
+            {syncing ? 'Syncing…' : 'Sync IG Bookmarks'}
+          </button>
+          <button className="primary" onClick={() => setShowModal(true)}>+ Add Video</button>
+        </div>
       </div>
+
+      {/* Import status bar */}
+      {importStatus && (
+        <div style={{
+          padding: '10px 24px',
+          background: importStatus.state === 'error' ? '#fff0f0' : '#f0fff0',
+          borderBottom: 'var(--border)',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        }}>
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: '9px', letterSpacing: '0.04em' }}>
+            {importStatus.msg}
+          </span>
+          <button
+            onClick={() => setImportStatus(null)}
+            style={{ border: 'none', background: 'transparent', fontSize: '14px', color: 'var(--color-muted)', cursor: 'pointer', padding: '0 4px' }}
+          >
+            ×
+          </button>
+        </div>
+      )}
 
       <main style={{ padding: '24px' }}>
         {loading && videos.length === 0 ? (
           <p className="label">Loading...</p>
-        ) : videos.length === 0 ? (
+        ) : videoOnlyVideos.length === 0 ? (
           <div style={{ textAlign: 'center', padding: '80px 24px' }}>
             <p style={{
               fontFamily: 'var(--font-mono)', fontSize: '12px', letterSpacing: '0.08em',
@@ -219,13 +305,15 @@ export default function Library() {
             </p>
             <button className="primary" onClick={() => setShowModal(true)}>+ Add Your First Video</button>
           </div>
+        ) : filteredVideos.length === 0 ? (
+          <p className="label" style={{ textAlign: 'center', padding: '40px' }}>No videos match this filter</p>
         ) : (
           <div style={{
             display: 'grid',
             gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))',
             gap: '2px',
           }}>
-            {videos.map((v) => <VideoCard key={v.id} video={v} onRetry={handleRetry} onPlay={setPreviewVideoId} />)}
+            {filteredVideos.map((v) => <VideoCard key={v.id} video={v} onRetry={handleRetry} onPlay={setPreviewVideoId} />)}
           </div>
         )}
       </main>

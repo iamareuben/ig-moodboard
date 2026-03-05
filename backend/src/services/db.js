@@ -90,7 +90,7 @@ export function updateAccount(id, fields) {
   const sets = [];
   const vals = [];
   for (const [k, v] of Object.entries(fields)) {
-    if (allowed.includes(k)) {
+    if (allowed.includes(k) && v !== undefined) {
       sets.push(`${k} = ?`);
       vals.push(typeof v === 'object' ? JSON.stringify(v) : v);
     }
@@ -166,6 +166,13 @@ export function getNotesForVideo(videoId) {
 
 export function getVideosForNote(noteId) {
   return db.prepare('SELECT video_id FROM video_notes WHERE note_id = ?').all(noteId).map(r => r.video_id);
+}
+
+// --- Video <-> Note helpers ---
+
+export function getVideoIdsInNotes() {
+  const rows = db.prepare('SELECT DISTINCT video_id FROM video_notes').all();
+  return new Set(rows.map((r) => r.video_id));
 }
 
 // --- Platform Cookies ---

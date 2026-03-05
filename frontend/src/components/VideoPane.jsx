@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { getVideo, frameFileUrl, videoUrl, retryVideo } from '../api.js';
+import { getVideo, frameFileUrl, videoUrl, retryVideo, addAnnotation, deleteAnnotation } from '../api.js';
 
 function StatBubble({ label, value }) {
   if (value == null) return null;
@@ -70,13 +70,24 @@ export default function VideoPane({ videoId, onClose }) {
   const [video, setVideo] = useState(null);
   const [loading, setLoading] = useState(true);
   const [retrying, setRetrying] = useState(false);
+  const [annotations, setAnnotations] = useState([]);
+  const [annotationInput, setAnnotationInput] = useState('');
+  const [addingAnnotation, setAddingAnnotation] = useState(false);
+  const [slideIndex, setSlideIndex] = useState(0);
   const videoRef = useRef(null);
+
+  useEffect(() => {
+    const handler = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [onClose]);
   const pollRef = useRef(null);
 
   useEffect(() => {
     if (!videoId) return;
     setLoading(true);
     setVideo(null);
+    setSlideIndex(0);
     let cancelled = false;
 
     async function poll() {
@@ -97,12 +108,45 @@ export default function VideoPane({ videoId, onClose }) {
     return () => { cancelled = true; };
   }, [videoId]);
 
+  // Fetch annotations when pane opens
+  useEffect(() => {
+    if (!videoId) return;
+    fetch(`/api/videos/${videoId}/annotations`)
+      .then((r) => r.json())
+      .then(setAnnotations)
+      .catch(() => {});
+  }, [videoId]);
+
   // Auto-play when video loads
   useEffect(() => {
     if (videoRef.current && video?.status === 'ready') {
       videoRef.current.play().catch(() => {});
     }
   }, [video?.status]);
+
+  async function handleAddAnnotation() {
+    const content = annotationInput.trim();
+    if (!content) return;
+    setAddingAnnotation(true);
+    try {
+      const a = await addAnnotation(videoId, content);
+      setAnnotations((prev) => [...prev, a]);
+      setAnnotationInput('');
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setAddingAnnotation(false);
+    }
+  }
+
+  async function handleDeleteAnnotation(annotationId) {
+    try {
+      await deleteAnnotation(videoId, annotationId);
+      setAnnotations((prev) => prev.filter((a) => a.id !== annotationId));
+    } catch (err) {
+      console.error(err);
+    }
+  }
 
   async function handleRetry() {
     setRetrying(true);
@@ -222,48 +266,110 @@ export default function VideoPane({ videoId, onClose }) {
 
           {video && (
             <>
-              {/* Video player */}
-              <div style={{
-                aspectRatio: '9/16',
-                background: '#111',
-                width: '100%',
-                maxHeight: '55vh',
-                overflow: 'hidden',
-                position: 'relative',
-              }}>
-                {video.status === 'ready' ? (
-                  <video
-                    ref={videoRef}
-                    src={videoUrl(videoId)}
-                    controls
-                    loop
-                    playsInline
+              {/* Main media area */}
+              {video.status === 'ready' && video.isCarousel ? (
+                // Carousel slideshow
+                <div style={{ position: 'relative', background: '#111', width: '100%' }}>
+                  <img
+                    src={frameFileUrl(videoId, shots[slideIndex]?.frameFile)}
+                    alt={`Slide ${slideIndex + 1}`}
                     style={{
                       width: '100%',
-                      height: '100%',
+                      maxHeight: '55vh',
                       objectFit: 'contain',
                       display: 'block',
                     }}
                   />
-                ) : (
-                  <div style={{
-                    width: '100%', height: '100%',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    flexDirection: 'column', gap: '10px', padding: '16px',
-                  }}>
-                    <p className="label" style={{ textAlign: 'center' }}>
-                      {video.status === 'error'
-                        ? (video.error || 'Processing failed')
-                        : video.status}
-                    </p>
-                    {canRetry && (
-                      <button onClick={handleRetry} disabled={retrying}>
-                        {retrying ? '…' : '↻ Retry'}
-                      </button>
-                    )}
-                  </div>
-                )}
-              </div>
+                  {/* Prev / Next */}
+                  {shots.length > 1 && (
+                    <>
+                      <button
+                        onClick={() => setSlideIndex((i) => Math.max(0, i - 1))}
+                        disabled={slideIndex === 0}
+                        style={{
+                          position: 'absolute', left: '8px', top: '50%',
+                          transform: 'translateY(-50%)',
+                          background: 'rgba(0,0,0,0.5)', color: '#fff',
+                          border: 'none', borderRadius: '50%',
+                          width: '32px', height: '32px', fontSize: '16px',
+                          cursor: slideIndex === 0 ? 'default' : 'pointer',
+                          opacity: slideIndex === 0 ? 0.3 : 0.85,
+                          lineHeight: 1, padding: 0,
+                        }}
+                      >‹</button>
+                      <button
+                        onClick={() => setSlideIndex((i) => Math.min(shots.length - 1, i + 1))}
+                        disabled={slideIndex === shots.length - 1}
+                        style={{
+                          position: 'absolute', right: '8px', top: '50%',
+                          transform: 'translateY(-50%)',
+                          background: 'rgba(0,0,0,0.5)', color: '#fff',
+                          border: 'none', borderRadius: '50%',
+                          width: '32px', height: '32px', fontSize: '16px',
+                          cursor: slideIndex === shots.length - 1 ? 'default' : 'pointer',
+                          opacity: slideIndex === shots.length - 1 ? 0.3 : 0.85,
+                          lineHeight: 1, padding: 0,
+                        }}
+                      >›</button>
+                      <div style={{
+                        position: 'absolute', bottom: '8px', left: '50%',
+                        transform: 'translateX(-50%)',
+                        background: 'rgba(0,0,0,0.5)',
+                        color: '#fff',
+                        fontFamily: 'var(--font-mono)',
+                        fontSize: '9px',
+                        letterSpacing: '0.06em',
+                        padding: '2px 8px',
+                      }}>
+                        {slideIndex + 1} / {shots.length}
+                      </div>
+                    </>
+                  )}
+                </div>
+              ) : (
+                // Video player (or status placeholder)
+                <div style={{
+                  aspectRatio: '9/16',
+                  background: '#111',
+                  width: '100%',
+                  maxHeight: '55vh',
+                  overflow: 'hidden',
+                  position: 'relative',
+                }}>
+                  {video.status === 'ready' ? (
+                    <video
+                      ref={videoRef}
+                      src={videoUrl(videoId)}
+                      controls
+                      loop
+                      playsInline
+                      style={{
+                        width: '100%',
+                        height: '100%',
+                        objectFit: 'contain',
+                        display: 'block',
+                      }}
+                    />
+                  ) : (
+                    <div style={{
+                      width: '100%', height: '100%',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      flexDirection: 'column', gap: '10px', padding: '16px',
+                    }}>
+                      <p className="label" style={{ textAlign: 'center' }}>
+                        {video.status === 'error'
+                          ? (video.error || 'Processing failed')
+                          : video.status}
+                      </p>
+                      {canRetry && (
+                        <button onClick={handleRetry} disabled={retrying}>
+                          {retrying ? '…' : '↻ Retry'}
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Account + URL */}
               <div style={{ padding: '12px 16px', borderBottom: 'var(--border)' }}>
@@ -328,7 +434,7 @@ export default function VideoPane({ videoId, onClose }) {
 
               {/* Backlinks */}
               {video.backlinks?.length > 0 && (
-                <div style={{ padding: '12px 16px' }}>
+                <div style={{ padding: '12px 16px', borderBottom: 'var(--border)' }}>
                   <p className="label" style={{ marginBottom: '8px' }}>In notes</p>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
                     {video.backlinks.map((note) => (
@@ -353,6 +459,74 @@ export default function VideoPane({ videoId, onClose }) {
                   </div>
                 </div>
               )}
+
+              {/* Annotations */}
+              <div style={{ padding: '12px 16px' }}>
+                <p className="label" style={{ marginBottom: '8px' }}>
+                  Annotations{annotations.length > 0 ? ` (${annotations.length})` : ''}
+                </p>
+                {annotations.length > 0 && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginBottom: '8px' }}>
+                    {annotations.map((a) => (
+                      <div key={a.id} style={{
+                        display: 'flex', alignItems: 'flex-start', gap: '8px',
+                        padding: '6px 10px', border: 'var(--border)', background: a.source === 'ig_collection' ? '#fafafa' : 'transparent',
+                      }}>
+                        <span style={{
+                          flex: 1,
+                          fontFamily: 'var(--font-mono)',
+                          fontSize: '9px',
+                          letterSpacing: '0.03em',
+                          lineHeight: 1.4,
+                          wordBreak: 'break-word',
+                        }}>
+                          {a.source === 'ig_collection' && (
+                            <span style={{ color: 'var(--color-muted)', marginRight: '4px' }}>[{a.source}]</span>
+                          )}
+                          {a.content}
+                        </span>
+                        <button
+                          onClick={() => handleDeleteAnnotation(a.id)}
+                          style={{
+                            border: 'none', background: 'transparent',
+                            color: 'var(--color-muted)', cursor: 'pointer',
+                            fontSize: '14px', lineHeight: 1, padding: '0',
+                            flexShrink: 0,
+                          }}
+                          title="Delete annotation"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div style={{ display: 'flex', gap: '6px' }}>
+                  <input
+                    value={annotationInput}
+                    onChange={(e) => setAnnotationInput(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') handleAddAnnotation(); }}
+                    placeholder="Add annotation…"
+                    style={{
+                      flex: 1,
+                      fontFamily: 'var(--font-mono)',
+                      fontSize: '9px',
+                      letterSpacing: '0.03em',
+                      padding: '6px 8px',
+                      border: 'var(--border)',
+                      background: 'var(--color-bg)',
+                      outline: 'none',
+                    }}
+                  />
+                  <button
+                    onClick={handleAddAnnotation}
+                    disabled={addingAnnotation || !annotationInput.trim()}
+                    style={{ flexShrink: 0 }}
+                  >
+                    Add
+                  </button>
+                </div>
+              </div>
             </>
           )}
         </div>

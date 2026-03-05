@@ -64,6 +64,12 @@ export async function retryVideo(id) {
   return res.json();
 }
 
+export async function archiveVideo(id) {
+  const res = await fetch(`${BASE}/videos/${id}/archive`, { method: 'POST' });
+  if (!res.ok) throw new Error('Failed to archive video');
+  return res.json();
+}
+
 export async function updateVideo(id, data) {
   const res = await fetch(`${BASE}/videos/${id}`, {
     method: 'PATCH',
@@ -162,7 +168,10 @@ export async function createAccount(data) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
   });
-  if (!res.ok) throw new Error('Failed to create account');
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || 'Failed to create account');
+  }
   return res.json();
 }
 
@@ -189,5 +198,44 @@ export async function getAccountLive(id, { platform, sort, limit } = {}) {
   if (limit) params.set('limit', limit);
   const res = await fetch(`${BASE}/accounts/${id}/live?${params}`);
   if (!res.ok) throw new Error('Failed to fetch live account data');
+  return res.json();
+}
+
+export async function searchVideos(q) {
+  const res = await fetch(`${BASE}/videos/search?q=${encodeURIComponent(q)}`);
+  if (!res.ok) throw new Error('Failed to search videos');
+  return res.json();
+}
+
+export async function syncIgBookmarks() {
+  const res = await fetch(`${BASE}/videos/import-bookmarks/sync-ig`, { method: 'POST' });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: 'Request failed' }));
+    throw new Error(err.error || 'Failed to sync IG bookmarks');
+  }
+  return res.json();
+}
+
+export async function addAnnotation(videoId, content) {
+  const res = await fetch(`${BASE}/videos/${videoId}/annotations`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content }),
+  });
+  if (!res.ok) throw new Error('Failed to add annotation');
+  return res.json();
+}
+
+export async function deleteAnnotation(videoId, annotationId) {
+  const res = await fetch(`${BASE}/videos/${videoId}/annotations/${annotationId}`, {
+    method: 'DELETE',
+  });
+  if (!res.ok) throw new Error('Failed to delete annotation');
+  return res.json();
+}
+
+export async function getCookieStatus() {
+  const res = await fetch(`${BASE}/settings/cookies/status`);
+  if (!res.ok) return {};
   return res.json();
 }

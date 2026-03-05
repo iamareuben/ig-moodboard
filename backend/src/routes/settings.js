@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { getCookies, setCookies, deleteCookies, listCookiePlatforms } from '../services/db.js';
+import { getCookieStatus, clearCookieStatus } from '../services/downloader.js';
 
 const router = Router();
 
@@ -51,6 +52,11 @@ router.get('/cookies', (req, res) => {
   res.json(listCookiePlatforms());
 });
 
+// GET /api/settings/cookies/status — { tiktok: 'needed'|'invalid', ... }
+router.get('/cookies/status', (req, res) => {
+  res.json(getCookieStatus());
+});
+
 // POST /api/settings/cookies/:platform — save cookies from pasted cURL or raw cookie string
 router.post('/cookies/:platform', (req, res) => {
   const { platform } = req.params;
@@ -67,6 +73,7 @@ router.post('/cookies/:platform', (req, res) => {
   }
   const cookiesTxt = toNetscapeCookies(PLATFORM_DOMAINS[platform], cookieStr);
   setCookies(platform, cookiesTxt);
+  clearCookieStatus(platform); // reset any 'needed'/'invalid' flag
   res.json({ ok: true });
 });
 
