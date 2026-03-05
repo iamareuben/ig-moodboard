@@ -3,6 +3,7 @@ import { frameFileUrl } from '../api.js';
 
 export default function ShotCell({ shot, index, videoId, heroShotId, onOpenModal, onSetHero, onDelete }) {
   const [hovered, setHovered] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const isHero = shot.id === heroShotId;
   const src = frameFileUrl(videoId, shot.frameFile);
   const shotTags = shot.tags || [];
@@ -17,7 +18,7 @@ export default function ShotCell({ shot, index, videoId, heroShotId, onOpenModal
         cursor: 'pointer',
       }}
       onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
+      onMouseLeave={() => { setHovered(false); setConfirmDelete(false); }}
       onClick={() => onOpenModal(index)}
     >
       <img
@@ -121,18 +122,23 @@ export default function ShotCell({ shot, index, videoId, heroShotId, onOpenModal
             ★
           </button>
           <button
-            title="Delete shot"
-            onClick={(e) => { e.stopPropagation(); onDelete(shot.id); }}
+            title={confirmDelete ? 'Click to confirm delete' : 'Delete shot'}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (confirmDelete) { onDelete(shot.id); } else { setConfirmDelete(true); }
+            }}
             style={{
-              background: 'transparent',
+              background: confirmDelete ? 'rgba(220,38,38,0.75)' : 'transparent',
               color: '#fff',
-              border: '1px solid rgba(255,255,255,0.6)',
+              border: `1px solid ${confirmDelete ? 'rgba(255,100,100,0.8)' : 'rgba(255,255,255,0.6)'}`,
               padding: '4px 10px',
-              fontSize: '12px',
+              fontSize: confirmDelete ? '8px' : '12px',
+              letterSpacing: confirmDelete ? '0.06em' : 0,
               cursor: 'pointer',
+              whiteSpace: 'nowrap',
             }}
           >
-            ✕
+            {confirmDelete ? 'DELETE?' : '✕'}
           </button>
         </div>
       )}

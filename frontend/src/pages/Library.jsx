@@ -51,12 +51,23 @@ function VideoCard({ video, onRetry, onPlay }) {
           </div>
         )}
 
-        {/* Status badge — top left, only when there's a thumbnail */}
-        {thumbSrc && (
+        {/* Status indicator — top left, only when there's a thumbnail */}
+        {thumbSrc && video.status !== 'ready' && (
           <div style={{ position: 'absolute', top: '8px', left: '8px' }}>
             <span className={`badge ${video.status}`} style={{ background: 'var(--color-white)' }}>
               {video.status}
             </span>
+          </div>
+        )}
+        {thumbSrc && video.status === 'ready' && (
+          <div style={{ position: 'absolute', top: '10px', left: '10px' }}>
+            <span style={{
+              display: 'inline-block',
+              width: '7px', height: '7px',
+              borderRadius: '50%',
+              background: '#22c55e',
+              boxShadow: '0 0 0 2px rgba(0,0,0,0.35)',
+            }} />
           </div>
         )}
 
