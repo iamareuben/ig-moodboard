@@ -8,6 +8,7 @@ import NoteEditor from './pages/NoteEditor.jsx';
 import Accounts from './pages/Accounts.jsx';
 import AccountDetail from './pages/AccountDetail.jsx';
 import Settings from './pages/Settings.jsx';
+import Login from './pages/Login.jsx';
 
 const PLATFORM_LABELS = { tiktok: 'TikTok', instagram: 'Instagram' };
 
@@ -120,7 +121,6 @@ function Nav() {
               textTransform: 'uppercase',
               padding: '6px 16px',
               borderLeft: 'var(--border)',
-              borderRight: to === '/settings' ? 'var(--border)' : 'none',
               background: isActive ? 'var(--color-black)' : 'transparent',
               color: isActive ? 'var(--color-white)' : 'var(--color-black)',
               textDecoration: 'none',
@@ -132,12 +132,54 @@ function Nav() {
             {label}
           </NavLink>
         ))}
+        <button
+          onClick={async () => {
+            await fetch('/api/auth/logout', { method: 'POST' });
+            window.location.reload();
+          }}
+          style={{
+            fontFamily: 'var(--font-mono)',
+            fontSize: '10px',
+            letterSpacing: '0.08em',
+            textTransform: 'uppercase',
+            padding: '6px 16px',
+            borderTop: 'none',
+            borderBottom: 'none',
+            borderLeft: 'var(--border)',
+            borderRight: 'var(--border)',
+            background: 'transparent',
+            color: 'var(--color-black)',
+            cursor: 'pointer',
+            height: '100%',
+          }}
+        >
+          Sign out
+        </button>
       </nav>
     </header>
   );
 }
 
 export default function App() {
+  const [authChecked, setAuthChecked] = useState(false);
+  const [authenticated, setAuthenticated] = useState(false);
+
+  useEffect(() => {
+    fetch('/api/auth/me')
+      .then((r) => r.json())
+      .then((data) => {
+        setAuthenticated(data.authenticated);
+        setAuthChecked(true);
+      })
+      .catch(() => setAuthChecked(true));
+  }, []);
+
+  if (!authChecked) return null;
+
+  if (!authenticated) {
+    return <Login onLogin={() => setAuthenticated(true)} />;
+  }
+
   return (
     <BrowserRouter>
       <Nav />

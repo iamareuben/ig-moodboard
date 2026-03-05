@@ -1,0 +1,35 @@
+# Local development — builds images from source
+# Usage: docker compose -f docker-compose.dev.yml up --build
+
+services:
+  backend:
+    build: ./backend
+    environment:
+      AUTH_PASSWORD: ${AUTH_PASSWORD}
+      SESSION_SECRET: ${SESSION_SECRET}
+      CORS_ORIGIN: ${CORS_ORIGIN:-}
+    volumes:
+      - app_data:/app/data
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "${PORT:-80}:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  # Cloudflare Tunnel for external HTTPS access
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    command: tunnel run
+    env_file: .env
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
+    restart: unless-stopped
+    depends_on:
+      - frontend
+
+volumes:
+  app_data:

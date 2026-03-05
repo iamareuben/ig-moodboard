@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import session from 'express-session';
 import { VIDEOS_DIR } from './services/storage.js';
 import { listManifests } from './services/storage.js';
 import { downloadAndProcess } from './services/pipeline.js';
@@ -9,6 +10,8 @@ import notesRouter from './routes/notes.js';
 import accountsRouter from './routes/accounts.js';
 import settingsRouter from './routes/settings.js';
 import importBookmarksRouter from './routes/importBookmarks.js';
+import authRouter from './routes/auth.js';
+import { requireAuth } from './middleware/auth.js';
 
 // Initialise DB (side-effect import creates tables)
 import './services/db.js';
@@ -16,8 +19,35 @@ import './services/db.js';
 const app = express();
 const PORT = 3001;
 
-app.use(cors({ origin: 'http://localhost:5173' }));
+app.set('trust proxy', 1);
+
+const corsOrigin = process.env.CORS_ORIGIN || 'http://localhost:5173';
+if (corsOrigin) {
+  app.use(cors({ origin: corsOrigin, credentials: true }));
+}
+
+app.use(session({
+  secret: process.env.SESSION_SECRET || 'dev-secret-change-in-production',
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    httpOnly: true,
+    sameSite: 'lax',
+    maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+  },
+}));
+
 app.use(express.json({ limit: '10mb' }));
+
+// Health check — public, no auth
+app.get('/api/health', (req, res) => res.json({ ok: true }));
+
+// Auth routes are public
+app.use('/api/auth', authRouter);
+
+// Everything else requires authentication
+app.use('/api', requireAuth);
+app.use('/media', requireAuth);
 
 app.use('/media', express.static(VIDEOS_DIR));
 

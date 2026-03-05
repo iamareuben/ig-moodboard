@@ -1,0 +1,36 @@
+# Production — uses pre-built images from GitHub Container Registry
+# For local development with live builds: docker compose -f docker-compose.dev.yml up
+
+services:
+  backend:
+    image: ghcr.io/iamareuben/ig-moodboard-backend:latest
+    pull_policy: always
+    env_file: .env
+    environment:
+      AUTH_PASSWORD: ${AUTH_PASSWORD}
+      SESSION_SECRET: ${SESSION_SECRET}
+    volumes:
+      - app_data:/app/data
+    restart: unless-stopped
+
+  frontend:
+    image: ghcr.io/iamareuben/ig-moodboard-frontend:latest
+    pull_policy: always
+    ports:
+      - "8082:80"  # Optional direct access; tunnel uses http://frontend:80 internally
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    command: tunnel run
+    env_file: .env
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
+    restart: unless-stopped
+    depends_on:
+      - frontend
+
+volumes:
+  app_data:

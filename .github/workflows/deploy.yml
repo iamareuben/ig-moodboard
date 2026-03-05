@@ -1,0 +1,49 @@
+name: Deploy to Server
+
+on:
+  workflow_run:
+    workflows: ["Build and Push Docker Images"]
+    types:
+      - completed
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, reuben-homeserver]
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Sync docker-compose
+        run: |
+          cd ~/vinspo
+          cp ${{ github.workspace }}/docker-compose.yml ./docker-compose.yml
+          echo "docker-compose.yml synced"
+
+      - name: Pull latest images
+        run: |
+          cd ~/vinspo
+          docker compose pull
+
+      - name: Restart services
+        run: |
+          cd ~/vinspo
+          docker compose up -d --remove-orphans
+          sleep 10
+          docker compose ps
+
+      - name: Cleanup old images
+        run: docker image prune -f
+
+      - name: Verify deployment
+        run: |
+          cd ~/vinspo
+          timeout 60 bash -c 'until curl -sf http://localhost:8082/api/health; do sleep 3; done' || {
+            echo "Health check failed, checking logs..."
+            docker compose logs --tail=50
+            exit 1
+          }
+          echo "Deployment successful!"
