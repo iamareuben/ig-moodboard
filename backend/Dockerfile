@@ -7,7 +7,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-pip \
     make \
     g++ \
-    && pip3 install yt-dlp curl_cffi --break-system-packages \
+    && pip3 install yt-dlp curl_cffi faster-whisper --break-system-packages \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -17,7 +17,7 @@ RUN npm install --omit=dev
 
 COPY src/ ./src/
 
-RUN mkdir -p /app/data/videos
+RUN mkdir -p /app/data/videos /app/data/models
 
 EXPOSE 3001
 

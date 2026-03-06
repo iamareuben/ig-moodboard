@@ -1,10 +1,16 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { getVideo, updateVideo, addShot, updateShot, deleteShot, parseAccount, retryVideo, archiveVideo, listVideos } from '../api.js';
+import { getVideo, updateVideo, addShot, updateShot, deleteShot, parseAccount, retryVideo, archiveVideo, listVideos, transcribeVideo } from '../api.js';
 import ShotGrid from '../components/ShotGrid.jsx';
 import CardPreview from '../components/CardPreview.jsx';
 import ShotModal from '../components/ShotModal.jsx';
 import TagInput from '../components/TagInput.jsx';
+
+function formatTime(seconds) {
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
 
 export default function VideoEditor() {
   const { id } = useParams();
@@ -16,12 +22,19 @@ export default function VideoEditor() {
   const [loading, setLoading] = useState(true);
   const [titleEditing, setTitleEditing] = useState(false);
   const [titleValue, setTitleValue] = useState('');
+  const [transcript, setTranscript] = useState(null);
+  const [transcribing, setTranscribing] = useState(false);
+  const [showTranscript, setShowTranscript] = useState(false);
+  const [transcriptError, setTranscriptError] = useState(null);
 
   const fetchVideo = useCallback(async () => {
     try {
       const data = await getVideo(id);
       setVideo(data);
       if (!titleEditing) setTitleValue(data.title || '');
+      if (data.transcript && !transcript) {
+        setTranscript(data.transcript);
+      }
     } catch (err) {
       console.error(err);
     } finally {
@@ -85,6 +98,24 @@ export default function VideoEditor() {
       navigate('/');
     } catch (err) {
       console.error(err);
+    }
+  }
+
+  async function handleTranscribe() {
+    if (transcript) {
+      setShowTranscript((v) => !v);
+      return;
+    }
+    setTranscribing(true);
+    setTranscriptError(null);
+    setShowTranscript(true);
+    try {
+      const result = await transcribeVideo(id);
+      setTranscript(result);
+    } catch (err) {
+      setTranscriptError(err.message);
+    } finally {
+      setTranscribing(false);
     }
   }
 
@@ -247,6 +278,15 @@ export default function VideoEditor() {
             {!video.isCarousel && (
               <button style={{ flexShrink: 0 }} onClick={() => setActiveShotIndex(-1)}>+ Shot</button>
             )}
+            {!video.isCarousel && (
+              <button
+                style={{ flexShrink: 0 }}
+                onClick={handleTranscribe}
+                disabled={transcribing}
+              >
+                {transcribing ? 'Transcribing…' : transcript ? (showTranscript ? 'Hide Transcript' : 'Transcript') : 'Transcribe'}
+              </button>
+            )}
             <button style={{ flexShrink: 0 }} onClick={() => setShowCard(true)}>Card Preview</button>
           </>
         )}
@@ -329,6 +369,84 @@ export default function VideoEditor() {
                   ↗ {note.title || 'Untitled'}
                 </Link>
               ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Transcript panel */}
+      {showTranscript && (
+        <div style={{
+          borderBottom: 'var(--border)',
+          background: 'var(--color-white)',
+          padding: '12px 24px',
+        }}>
+          {transcribing && (
+            <span style={{
+              fontFamily: 'var(--font-mono)',
+              fontSize: '10px',
+              letterSpacing: '0.06em',
+              color: 'var(--color-muted)',
+              textTransform: 'uppercase',
+            }}>
+              Transcribing… (downloading model on first run)
+            </span>
+          )}
+          {transcriptError && (
+            <span style={{
+              fontFamily: 'var(--font-mono)',
+              fontSize: '10px',
+              color: '#c00',
+            }}>
+              Error: {transcriptError}
+            </span>
+          )}
+          {transcript && (
+            <div>
+              {transcript.language && (
+                <span style={{
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: '9px',
+                  letterSpacing: '0.06em',
+                  textTransform: 'uppercase',
+                  color: 'var(--color-muted)',
+                  marginRight: '12px',
+                }}>
+                  [{transcript.language}]
+                </span>
+              )}
+              {transcript.segments?.length > 0 ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '6px' }}>
+                  {transcript.segments.map((seg, i) => (
+                    <div key={i} style={{ display: 'flex', gap: '12px', alignItems: 'baseline' }}>
+                      <span style={{
+                        fontFamily: 'var(--font-mono)',
+                        fontSize: '9px',
+                        color: 'var(--color-muted)',
+                        flexShrink: 0,
+                        minWidth: '60px',
+                      }}>
+                        {formatTime(seg.start)}
+                      </span>
+                      <span style={{
+                        fontFamily: 'var(--font-mono)',
+                        fontSize: '11px',
+                        lineHeight: 1.5,
+                      }}>
+                        {seg.text}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <span style={{
+                  fontFamily: 'var(--font-mono)',
+                  fontSize: '10px',
+                  color: 'var(--color-muted)',
+                }}>
+                  No speech detected.
+                </span>
+              )}
             </div>
           )}
         </div>

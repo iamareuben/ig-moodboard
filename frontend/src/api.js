@@ -234,6 +234,15 @@ export async function deleteAnnotation(videoId, annotationId) {
   return res.json();
 }
 
+export async function transcribeVideo(id) {
+  const res = await fetch(`${BASE}/videos/${id}/transcribe`, { method: 'POST' });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: 'Transcription failed' }));
+    throw new Error(err.error || 'Transcription failed');
+  }
+  return res.json();
+}
+
 export async function getCookieStatus() {
   const res = await fetch(`${BASE}/settings/cookies/status`);
   if (!res.ok) return {};

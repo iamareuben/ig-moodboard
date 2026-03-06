@@ -14,6 +14,7 @@ import { extractFrameAtTime } from '../services/shotDetector.js';
 import { canonicalizeUrl } from '../services/canonicalize.js';
 import { getNotesForVideo, getVideoIdsInNotes } from '../services/db.js';
 import { downloadAndProcess } from '../services/pipeline.js';
+import { transcribeVideo } from '../services/transcriber.js';
 
 const router = Router();
 
@@ -336,6 +337,35 @@ router.delete('/:id/annotations/:annotationId', async (req, res) => {
     res.json({ ok: true });
   } catch {
     res.status(404).json({ error: 'Video not found' });
+  }
+});
+
+// POST /api/videos/:id/transcribe — on-demand transcription via faster-whisper
+router.post('/:id/transcribe', async (req, res) => {
+  try {
+    const manifest = await readManifest(req.params.id);
+
+    if (manifest.isCarousel) {
+      return res.status(400).json({ error: 'Cannot transcribe a carousel post' });
+    }
+    if (manifest.status !== 'ready') {
+      return res.status(400).json({ error: 'Video is not ready' });
+    }
+
+    // Return cached transcript if already done
+    if (manifest.transcript) {
+      return res.json(manifest.transcript);
+    }
+
+    const vFile = videoFile(req.params.id);
+    const result = await transcribeVideo(vFile);
+
+    manifest.transcript = { ...result, createdAt: new Date().toISOString() };
+    await writeManifest(req.params.id, manifest);
+
+    res.json(manifest.transcript);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
