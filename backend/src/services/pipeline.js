@@ -65,8 +65,9 @@ export async function downloadAndProcess(id, url, retryCount = 0) {
     delete finalManifest.nextRetryAt;
     await writeManifest(id, finalManifest);
   } catch (err) {
-    // "No video formats found" = carousel or photo post — try downloading as images first
-    if (/No video formats found/i.test(err.message)) {
+    // "No video formats found" or ffprobe failure = carousel/photo — try downloading as images
+    const isCarouselCandidate = /No video formats found/i.test(err.message) || /ffprobe exited with code/i.test(err.message);
+    if (isCarouselCandidate) {
       console.log(`[pipeline] ${id}: no video formats — attempting carousel image download`);
       try {
         const slides = await downloadCarousel(url, framesDir(id));
