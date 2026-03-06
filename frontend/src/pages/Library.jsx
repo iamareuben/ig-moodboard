@@ -10,7 +10,7 @@ function VideoCard({ video, onRetry, onPlay }) {
   const account = video.accountUsername
     ? `@${video.accountUsername}`
     : parseAccount(video.url);
-  const displayTitle = video.title || account || video.platform?.toUpperCase() || 'VIDEO';
+  const displayTitle = video.title || account || (video.platform === 'upload' ? 'UPLOAD' : video.platform?.toUpperCase()) || 'VIDEO';
   const videoTags = video.tags || [];
   const canRetry = video.status === 'error' || video.status === 'processing';
 

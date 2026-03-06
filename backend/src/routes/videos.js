@@ -1,7 +1,10 @@
 import { Router } from 'express';
 import { randomUUID } from 'crypto';
-import { access, unlink } from 'fs/promises';
+import { access, unlink, rename } from 'fs/promises';
 import { constants } from 'fs';
+import multer from 'multer';
+import { join } from 'path';
+import { tmpdir } from 'os';
 import {
   initVideoDir,
   readManifest,
@@ -9,12 +12,30 @@ import {
   listManifests,
   videoFile,
   frameFile,
+  framesDir,
+  VIDEOS_DIR,
 } from '../services/storage.js';
-import { extractFrameAtTime } from '../services/shotDetector.js';
+import { extractFrameAtTime, detectShots } from '../services/shotDetector.js';
+import { getVideoDuration } from '../services/downloader.js';
 import { canonicalizeUrl } from '../services/canonicalize.js';
 import { getNotesForVideo, getVideoIdsInNotes } from '../services/db.js';
 import { downloadAndProcess } from '../services/pipeline.js';
 import { transcribeVideo } from '../services/transcriber.js';
+
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: tmpdir(),
+    filename: (req, file, cb) => cb(null, `upload-${randomUUID()}.mp4`),
+  }),
+  limits: { fileSize: 500 * 1024 * 1024 }, // 500 MB
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype === 'video/mp4' || file.originalname.toLowerCase().endsWith('.mp4')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only MP4 files are supported'));
+    }
+  },
+});
 
 const router = Router();
 
@@ -51,6 +72,64 @@ async function findExistingVideo(canonical) {
   }
   return null;
 }
+
+// POST /api/videos/upload — upload an MP4 file directly
+router.post('/upload', upload.single('video'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No MP4 file provided' });
+
+  const id = randomUUID();
+  await initVideoDir(id);
+
+  const dest = videoFile(id);
+  await rename(req.file.path, dest);
+
+  const title = req.file.originalname.replace(/\.mp4$/i, '');
+
+  const manifest = {
+    id,
+    url: null,
+    platform: 'upload',
+    title,
+    downloadedAt: new Date().toISOString(),
+    status: 'processing',
+    duration: null,
+    shots: [],
+    heroShotId: null,
+    canonicalId: null,
+    normalizedUrl: null,
+    accountId: null,
+    accountUsername: null,
+    accountDisplayName: null,
+    stats: null,
+  };
+  await writeManifest(id, manifest);
+
+  // Fire-and-forget shot detection
+  (async () => {
+    try {
+      const duration = await getVideoDuration(dest);
+      const shots = await detectShots(dest, framesDir(id), duration);
+      const heroShotId = shots.length > 0 ? shots[0].id : null;
+      if (shots.length > 0) shots[0].isHero = true;
+      const m = await readManifest(id);
+      m.status = 'ready';
+      m.duration = duration;
+      m.shots = shots;
+      m.heroShotId = heroShotId;
+      await writeManifest(id, m);
+    } catch (err) {
+      console.error(`[upload pipeline] ${id}:`, err.message);
+      try {
+        const m = await readManifest(id);
+        m.status = 'error';
+        m.error = err.message;
+        await writeManifest(id, m);
+      } catch { /* ignore */ }
+    }
+  })();
+
+  res.status(201).json({ id, status: 'processing', existing: false });
+});
 
 // POST /api/videos — submit URL (with dedup)
 router.post('/', async (req, res) => {

@@ -235,25 +235,27 @@ export default function VideoEditor() {
         )}
 
         {/* Original URL */}
-        <a
-          href={video.url}
-          target="_blank"
-          rel="noreferrer"
-          onClick={(e) => e.stopPropagation()}
-          style={{
-            fontFamily: 'var(--font-mono)',
-            fontSize: '9px',
-            letterSpacing: '0.04em',
-            color: 'var(--color-muted)',
-            flexShrink: 0,
-            maxWidth: '200px',
-            whiteSpace: 'nowrap',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-          }}
-        >
-          {video.url}
-        </a>
+        {video.url && (
+          <a
+            href={video.url}
+            target="_blank"
+            rel="noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              fontFamily: 'var(--font-mono)',
+              fontSize: '9px',
+              letterSpacing: '0.04em',
+              color: 'var(--color-muted)',
+              flexShrink: 0,
+              maxWidth: '200px',
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+            }}
+          >
+            {video.url}
+          </a>
+        )}
 
         {/* Video-level tags */}
         {video.status === 'ready' && (

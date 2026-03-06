@@ -234,6 +234,17 @@ export async function deleteAnnotation(videoId, annotationId) {
   return res.json();
 }
 
+export async function uploadVideo(file) {
+  const form = new FormData();
+  form.append('video', file);
+  const res = await fetch(`${BASE}/videos/upload`, { method: 'POST', body: form });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: 'Upload failed' }));
+    throw new Error(err.error || 'Upload failed');
+  }
+  return res.json();
+}
+
 export async function transcribeVideo(id) {
   const res = await fetch(`${BASE}/videos/${id}/transcribe`, { method: 'POST' });
   if (!res.ok) {
