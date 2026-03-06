@@ -211,8 +211,6 @@ export function detectSocialPlatform(text) {
       if (/\/(p|reel|reels|tv)\//i.test(u.pathname)) return 'instagram';
     }
     if (host === 'tiktok.com' || host === 'vm.tiktok.com' || host === 't.tiktok.com' || host === 'vt.tiktok.com') {
-      // Photo/slideshow posts can't be downloaded as video — skip them
-      if (/\/photo\//.test(u.pathname)) return null;
       return 'tiktok';
     }
   } catch {
