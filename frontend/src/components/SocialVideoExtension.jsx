@@ -1,7 +1,7 @@
 import { Node, mergeAttributes } from '@tiptap/core';
 import { ReactNodeViewRenderer, NodeViewWrapper } from '@tiptap/react';
 import React, { useEffect, useState } from 'react';
-import { submitVideo, getVideo, frameFileUrl } from '../api.js';
+import { submitVideo, getVideo, frameFileUrl, retryVideo } from '../api.js';
 
 // Status polling for a single video
 function useVideoStatus(videoId) {
@@ -34,6 +34,7 @@ function useVideoStatus(videoId) {
 function SocialVideoBlockView({ node, updateAttributes, extension }) {
   const { url, videoId, platform, status: nodeStatus } = node.attrs;
   const video = useVideoStatus(videoId);
+  const [retrying, setRetrying] = useState(false);
 
   const heroFrame = video?.shots?.length > 0
     ? (video.shots.find((s) => s.id === video.heroShotId) || video.shots[0])?.frameFile
@@ -41,13 +42,36 @@ function SocialVideoBlockView({ node, updateAttributes, extension }) {
   const thumbSrc = heroFrame && videoId ? frameFileUrl(videoId, heroFrame) : null;
 
   const displayStatus = video?.status || nodeStatus || 'loading';
-  const title = video?.title || video?.accountUsername ? `@${video.accountUsername}` : url;
   const platformLabel = platform === 'instagram' ? 'IG' : platform === 'tiktok' ? 'TT' : '?';
 
   function handleClick(e) {
     e.preventDefault();
     if (videoId && extension.options.onVideoClick) {
       extension.options.onVideoClick(videoId);
+    }
+  }
+
+  function handleOpenUrl(e) {
+    e.stopPropagation();
+    window.open(url, '_blank', 'noopener,noreferrer');
+  }
+
+  async function handleRetry(e) {
+    e.stopPropagation();
+    if (retrying) return;
+    setRetrying(true);
+    try {
+      if (videoId) {
+        await retryVideo(videoId);
+      } else {
+        // No videoId — original submitVideo never resolved; re-submit and patch node
+        const { id: newVideoId } = await submitVideo(url);
+        updateAttributes({ videoId: newVideoId, status: 'pending' });
+      }
+    } catch {
+      // ignore — polling will pick up new status
+    } finally {
+      setRetrying(false);
     }
   }
 
@@ -130,8 +154,25 @@ function SocialVideoBlockView({ node, updateAttributes, extension }) {
           }}>
             {video?.title || (video?.accountUsername ? `@${video.accountUsername}` : '')}
           </p>
-          <p className="label" style={{ fontSize: '8px' }}>
-            {url.length > 50 ? url.slice(0, 50) + '…' : url}
+          <p className="label" style={{ fontSize: '8px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+            <span title={url} style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {url.length > 50 ? url.slice(0, 50) + '…' : url}
+            </span>
+            <button
+              onClick={handleOpenUrl}
+              title="Open original URL"
+              style={{
+                flexShrink: 0,
+                background: 'none',
+                border: 'none',
+                padding: '0 2px',
+                cursor: 'pointer',
+                color: 'var(--color-muted)',
+                fontSize: '9px',
+                lineHeight: 1,
+                fontFamily: 'var(--font-mono)',
+              }}
+            >↗</button>
           </p>
           {video?.stats?.viewCount != null && (
             <p className="label" style={{ fontSize: '8px', marginTop: '2px' }}>
@@ -143,6 +184,26 @@ function SocialVideoBlockView({ node, updateAttributes, extension }) {
             <p className="label" style={{ fontSize: '8px', marginTop: '2px' }}>
               {video.annotationCount} &#9998;
             </p>
+          )}
+          {(!videoId || displayStatus === 'error' || displayStatus === 'not_video') && (
+            <button
+              onClick={handleRetry}
+              disabled={retrying}
+              style={{
+                marginTop: '4px',
+                background: 'none',
+                border: '1px solid var(--color-border)',
+                padding: '2px 6px',
+                cursor: retrying ? 'default' : 'pointer',
+                fontFamily: 'var(--font-mono)',
+                fontSize: '7px',
+                letterSpacing: '0.06em',
+                textTransform: 'uppercase',
+                color: 'var(--color-muted)',
+              }}
+            >
+              {retrying ? '…' : '↻ Retry'}
+            </button>
           )}
         </div>
 
