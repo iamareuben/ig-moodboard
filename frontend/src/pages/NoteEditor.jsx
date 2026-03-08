@@ -116,10 +116,21 @@ export default function NoteEditor() {
         const html = event.clipboardData?.getData('text/html') || '';
 
         const lines = text.split('\n');
-        const hasSocialUrls = lines.some((l) => detectSocialPlatform(l.trim()));
+        const hasBareUrls = lines.some((l) => detectSocialPlatform(l.trim()));
 
-        // No social URLs — let TipTap handle natively (preserves headings, bold, links)
-        if (!hasSocialUrls) return false;
+        // Also check for social URLs hiding in <a href> attributes
+        const hasLinkedUrls = (() => {
+          if (!html) return false;
+          try {
+            const tmp = new window.DOMParser().parseFromString(html, 'text/html');
+            return [...tmp.querySelectorAll('a[href]')].some(
+              (a) => detectSocialPlatform(a.getAttribute('href') || ''),
+            );
+          } catch { return false; }
+        })();
+
+        // No social URLs anywhere — let TipTap handle natively (preserves headings, bold, links)
+        if (!hasBareUrls && !hasLinkedUrls) return false;
 
         event.preventDefault();
 
@@ -144,17 +155,67 @@ export default function NoteEditor() {
             buffer = domDoc.createElement('div');
           }
 
+          // Split a block element at any social <a> links it contains, inserting video
+          // cards as block-level breaks. Parts before/after keep the parent tag (h1, p, etc).
+          function splitBlockAtSocialLinks(blockEl) {
+            const tag = blockEl.tagName || 'P';
+            let frag = domDoc.createElement(tag);
+
+            function flushFrag() {
+              if (!frag.hasChildNodes()) return;
+              const wrapper = domDoc.createElement('div');
+              wrapper.appendChild(frag);
+              try {
+                const parsed = pmParser.parse(wrapper);
+                parsed.content.forEach((n) => nodes.push(n));
+              } catch {
+                const t = frag.textContent.trim();
+                if (t) nodes.push(schema.nodes.paragraph.create(null, schema.text(t)));
+              }
+              frag = domDoc.createElement(tag);
+            }
+
+            for (const cn of [...blockEl.childNodes]) {
+              const href = cn.nodeName === 'A' ? (cn.getAttribute?.('href') || '') : '';
+              const anchorPlatform = href ? detectSocialPlatform(href) : null;
+              if (anchorPlatform) {
+                flushFrag();
+                nodes.push(schema.nodes.socialVideoBlock.create({
+                  url: href, platform: anchorPlatform, videoId: null, status: 'pending',
+                }));
+                socialUrlsToSubmit.push(href);
+              } else {
+                frag.appendChild(cn.cloneNode(true));
+              }
+            }
+            flushFrag();
+          }
+
           for (const child of [...domDoc.body.childNodes]) {
+            if (child.nodeType !== 1) {
+              buffer.appendChild(child.cloneNode(true));
+              continue;
+            }
             const txt = (child.textContent || '').trim();
-            const platform = detectSocialPlatform(txt);
-            if (platform && child.nodeType === 1 /* ELEMENT_NODE */) {
+            const barePlatform = detectSocialPlatform(txt);
+            if (barePlatform) {
+              // Entire block is a bare social URL
               flushBuffer();
               nodes.push(schema.nodes.socialVideoBlock.create({
-                url: txt, platform, videoId: null, status: 'pending',
+                url: txt, platform: barePlatform, videoId: null, status: 'pending',
               }));
               socialUrlsToSubmit.push(txt);
             } else {
-              buffer.appendChild(child.cloneNode(true));
+              // Check for social links within the block
+              const hasSocialLink = [...child.querySelectorAll('a[href]')].some(
+                (a) => detectSocialPlatform(a.getAttribute('href') || ''),
+              );
+              if (hasSocialLink) {
+                flushBuffer();
+                splitBlockAtSocialLinks(child);
+              } else {
+                buffer.appendChild(child.cloneNode(true));
+              }
             }
           }
           flushBuffer();
