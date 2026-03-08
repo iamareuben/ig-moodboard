@@ -16,9 +16,9 @@ import {
   VIDEOS_DIR,
 } from '../services/storage.js';
 import { extractFrameAtTime, detectShots } from '../services/shotDetector.js';
-import { getVideoDuration } from '../services/downloader.js';
-import { canonicalizeUrl } from '../services/canonicalize.js';
-import { getNotesForVideo, getVideoIdsInNotes } from '../services/db.js';
+import { getVideoDuration, getVideoMetadata } from '../services/downloader.js';
+import { canonicalizeUrl, extractAccountFromUrl } from '../services/canonicalize.js';
+import { getNotesForVideo, getVideoIdsInNotes, upsertAccount } from '../services/db.js';
 import { downloadAndProcess } from '../services/pipeline.js';
 import { transcribeVideo } from '../services/transcriber.js';
 
@@ -178,6 +178,35 @@ router.post('/', async (req, res) => {
   res.status(201).json({ id, status: 'pending', existing: false });
 });
 
+// POST /api/videos/refresh-all-stats — bulk re-fetch metadata for all ready videos
+router.post('/refresh-all-stats', async (req, res) => {
+  const manifests = await listManifests();
+  const targets = manifests.filter((m) => m.status === 'ready' && m.url != null);
+  let done = 0;
+  let failed = 0;
+  for (const m of targets) {
+    try {
+      const meta = await getVideoMetadata(m.url);
+      if (meta) {
+        const manifest = await readManifest(m.id);
+        if (meta.title) manifest.title = meta.title;
+        manifest.stats = meta.stats;
+        manifest.statsError = false;
+        await writeManifest(m.id, manifest);
+        done++;
+      } else {
+        const manifest = await readManifest(m.id);
+        manifest.statsError = true;
+        await writeManifest(m.id, manifest);
+        failed++;
+      }
+    } catch {
+      failed++;
+    }
+  }
+  res.json({ total: targets.length, done, failed });
+});
+
 // GET /api/videos — list all
 router.get('/', async (req, res) => {
   const manifests = await listManifests();
@@ -221,6 +250,42 @@ router.get('/search', async (req, res) => {
       };
     });
   res.json(results);
+});
+
+// POST /api/videos/:id/refresh-stats — re-fetch metadata for a single video
+router.post('/:id/refresh-stats', async (req, res) => {
+  try {
+    const manifest = await readManifest(req.params.id);
+    if (!manifest.url) return res.status(400).json({ error: 'Video has no URL' });
+    const meta = await getVideoMetadata(manifest.url);
+    if (!meta) {
+      manifest.statsError = true;
+      await writeManifest(req.params.id, manifest);
+      return res.status(502).json({ error: 'Metadata fetch failed' });
+    }
+    if (meta.title) manifest.title = meta.title;
+    manifest.stats = meta.stats;
+    manifest.statsError = false;
+    // Upsert account if uploader info available
+    if (meta.uploaderUsername) {
+      const accountInfo = extractAccountFromUrl(manifest.url);
+      const platform = accountInfo?.platform || manifest.platform;
+      const acct = upsertAccount({
+        username: meta.uploaderUsername,
+        display_name: meta.uploaderDisplayName,
+        ig_username: platform === 'instagram' ? meta.uploaderUsername : undefined,
+        tt_username: platform === 'tiktok' ? meta.uploaderUsername : undefined,
+        avatar_url: null,
+      });
+      manifest.accountId = acct.id;
+      manifest.accountUsername = meta.uploaderUsername;
+      manifest.accountDisplayName = meta.uploaderDisplayName;
+    }
+    await writeManifest(req.params.id, manifest);
+    res.json(manifest);
+  } catch {
+    res.status(404).json({ error: 'Video not found' });
+  }
 });
 
 // GET /api/videos/:id — full manifest + backlinks

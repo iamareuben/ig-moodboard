@@ -21,6 +21,7 @@ export async function downloadAndProcess(id, url, retryCount = 0) {
       manifest = await readManifest(id);
       manifest.title = meta.title || manifest.title || '';
       manifest.stats = meta.stats;
+      manifest.statsError = false;
       if (meta.canonicalId && !manifest.canonicalId) manifest.canonicalId = meta.canonicalId;
       if (meta.webpageUrl && !manifest.normalizedUrl) manifest.normalizedUrl = meta.webpageUrl;
 
@@ -40,6 +41,9 @@ export async function downloadAndProcess(id, url, retryCount = 0) {
         manifest.accountUsername = uploaderUsername;
         manifest.accountDisplayName = meta.uploaderDisplayName;
       }
+      await writeManifest(id, manifest);
+    } else {
+      manifest.statsError = true;
       await writeManifest(id, manifest);
     }
 

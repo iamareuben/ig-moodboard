@@ -193,22 +193,53 @@ function PlatformCard({ platform, savedAt, onSaved, onDeleted }) {
 }
 
 function RetryFailedSection() {
-  const [state, setState] = useState('idle'); // idle | running | done
-  const [counts, setCounts] = useState({ total: 0, done: 0 });
+  const [retryState, setRetryState] = useState('idle'); // idle | running | done
+  const [retryCounts, setRetryCounts] = useState({ total: 0, done: 0 });
+  const [statsState, setStatsState] = useState('idle'); // idle | running | done
+  const [statsCounts, setStatsCounts] = useState({ total: 0, done: 0, failed: 0 });
 
   async function handleRetryAll() {
-    setState('running');
+    setRetryState('running');
     const res = await fetch('/api/videos');
     const videos = await res.json();
     const failed = videos.filter((v) => v.status === 'error');
-    setCounts({ total: failed.length, done: 0 });
+    setRetryCounts({ total: failed.length, done: 0 });
 
     for (let i = 0; i < failed.length; i++) {
       await fetch(`/api/videos/${failed[i].id}/retry`, { method: 'POST' });
-      setCounts({ total: failed.length, done: i + 1 });
+      setRetryCounts({ total: failed.length, done: i + 1 });
     }
-    setState('done');
+    setRetryState('done');
   }
+
+  async function handlePullAllStats() {
+    setStatsState('running');
+    // Get total count to show in progress
+    const res = await fetch('/api/videos');
+    const videos = await res.json();
+    const total = videos.filter((v) => v.status === 'ready' && v.url).length;
+    setStatsCounts({ total, done: 0, failed: 0 });
+
+    try {
+      const result = await fetch('/api/videos/refresh-all-stats', { method: 'POST' }).then((r) => r.json());
+      setStatsCounts({ total: result.total, done: result.done, failed: result.failed });
+    } catch {
+      setStatsCounts((c) => ({ ...c, failed: c.total }));
+    }
+    setStatsState('done');
+  }
+
+  const btnStyle = (running) => ({
+    fontFamily: 'var(--font-mono)',
+    fontSize: '10px',
+    letterSpacing: '0.08em',
+    textTransform: 'uppercase',
+    background: running ? '#ccc' : 'var(--color-black)',
+    color: 'var(--color-white)',
+    border: 'none',
+    padding: '8px 20px',
+    cursor: running ? 'default' : 'pointer',
+  });
 
   return (
     <div style={{ border: 'var(--border)', marginBottom: '24px' }}>
@@ -223,29 +254,37 @@ function RetryFailedSection() {
       }}>
         Downloads
       </div>
-      <div style={{ padding: '16px', display: 'flex', alignItems: 'center', gap: '16px' }}>
-        <button
-          onClick={handleRetryAll}
-          disabled={state === 'running'}
-          style={{
-            fontFamily: 'var(--font-mono)',
-            fontSize: '10px',
-            letterSpacing: '0.08em',
-            textTransform: 'uppercase',
-            background: state === 'running' ? '#ccc' : 'var(--color-black)',
-            color: 'var(--color-white)',
-            border: 'none',
-            padding: '8px 20px',
-            cursor: state === 'running' ? 'default' : 'pointer',
-          }}
-        >
-          {state === 'running' ? `Retrying… (${counts.done}/${counts.total})` : 'Retry All Failed Downloads'}
-        </button>
-        {state === 'done' && (
-          <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: '#666' }}>
-            Queued {counts.total} download{counts.total !== 1 ? 's' : ''}
-          </span>
-        )}
+      <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+          <button
+            onClick={handleRetryAll}
+            disabled={retryState === 'running'}
+            style={btnStyle(retryState === 'running')}
+          >
+            {retryState === 'running' ? `Retrying… (${retryCounts.done}/${retryCounts.total})` : 'Retry All Failed Downloads'}
+          </button>
+          {retryState === 'done' && (
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: '#666' }}>
+              Queued {retryCounts.total} download{retryCounts.total !== 1 ? 's' : ''}
+            </span>
+          )}
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+          <button
+            onClick={handlePullAllStats}
+            disabled={statsState === 'running'}
+            style={btnStyle(statsState === 'running')}
+          >
+            {statsState === 'running'
+              ? `Refreshing ${statsCounts.total} videos…`
+              : 'Pull All View Counts'}
+          </button>
+          {statsState === 'done' && (
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: '#666' }}>
+              Updated {statsCounts.done}/{statsCounts.total}
+            </span>
+          )}
+        </div>
       </div>
     </div>
   );

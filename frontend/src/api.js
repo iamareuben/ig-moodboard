@@ -259,3 +259,9 @@ export async function getCookieStatus() {
   if (!res.ok) return {};
   return res.json();
 }
+
+export async function refreshVideoStats(id) {
+  const res = await fetch(`${BASE}/videos/${id}/refresh-stats`, { method: 'POST' });
+  if (!res.ok) throw new Error('Failed to refresh stats');
+  return res.json();
+}

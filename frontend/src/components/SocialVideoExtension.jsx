@@ -1,7 +1,7 @@
 import { Node, mergeAttributes } from '@tiptap/core';
 import { ReactNodeViewRenderer, NodeViewWrapper } from '@tiptap/react';
 import React, { useEffect, useState } from 'react';
-import { submitVideo, getVideo, frameFileUrl, retryVideo } from '../api.js';
+import { submitVideo, getVideo, frameFileUrl, retryVideo, refreshVideoStats } from '../api.js';
 
 // Status polling for a single video
 function useVideoStatus(videoId) {
@@ -28,13 +28,24 @@ function useVideoStatus(videoId) {
     return () => { cancelled = true; };
   }, [videoId]);
 
-  return video;
+  async function refetch() {
+    if (!videoId) return;
+    try {
+      const v = await getVideo(videoId);
+      setVideo(v);
+    } catch {
+      // ignore
+    }
+  }
+
+  return { video, refetch };
 }
 
 function SocialVideoBlockView({ node, updateAttributes, extension }) {
   const { url, videoId, platform, status: nodeStatus } = node.attrs;
-  const video = useVideoStatus(videoId);
+  const { video, refetch } = useVideoStatus(videoId);
   const [retrying, setRetrying] = useState(false);
+  const [statsRefreshing, setStatsRefreshing] = useState(false);
 
   const heroFrame = video?.shots?.length > 0
     ? (video.shots.find((s) => s.id === video.heroShotId) || video.shots[0])?.frameFile
@@ -72,6 +83,20 @@ function SocialVideoBlockView({ node, updateAttributes, extension }) {
       // ignore — polling will pick up new status
     } finally {
       setRetrying(false);
+    }
+  }
+
+  async function handleRefreshStats(e) {
+    e.stopPropagation();
+    if (statsRefreshing || !videoId) return;
+    setStatsRefreshing(true);
+    try {
+      await refreshVideoStats(videoId);
+      await refetch();
+    } catch {
+      // ignore
+    } finally {
+      setStatsRefreshing(false);
     }
   }
 
@@ -179,6 +204,26 @@ function SocialVideoBlockView({ node, updateAttributes, extension }) {
               {Number(video.stats.viewCount).toLocaleString()} views
               {video.stats.likeCount != null && ` · ${Number(video.stats.likeCount).toLocaleString()} likes`}
             </p>
+          )}
+          {video?.statsError === true && video?.stats?.viewCount == null && videoId && (
+            <button
+              onClick={handleRefreshStats}
+              disabled={statsRefreshing}
+              style={{
+                marginTop: '4px',
+                background: 'none',
+                border: '1px solid var(--color-border)',
+                padding: '2px 6px',
+                cursor: statsRefreshing ? 'default' : 'pointer',
+                fontFamily: 'var(--font-mono)',
+                fontSize: '7px',
+                letterSpacing: '0.06em',
+                textTransform: 'uppercase',
+                color: 'var(--color-muted)',
+              }}
+            >
+              {statsRefreshing ? '…' : '↻ stats'}
+            </button>
           )}
           {(video?.annotationCount ?? 0) > 0 && (
             <p className="label" style={{ fontSize: '8px', marginTop: '2px' }}>

@@ -4,6 +4,8 @@ import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Image from '@tiptap/extension-image';
 import Placeholder from '@tiptap/extension-placeholder';
+import TiptapLink from '@tiptap/extension-link';
+import { DOMParser as PMMParser } from '@tiptap/pm/model';
 import { getNote, updateNote, submitVideo, listVideos } from '../api.js';
 import { SocialVideoBlock, detectSocialPlatform } from '../components/SocialVideoExtension.jsx';
 import { buildVideoFinderExtension } from '../components/VideoFinderExtension.js';
@@ -90,6 +92,10 @@ export default function NoteEditor() {
       Placeholder.configure({
         placeholder: 'Start writing… Paste an Instagram or TikTok link to embed a video. Type / to find a saved video.',
       }),
+      TiptapLink.configure({
+        openOnClick: false,
+        HTMLAttributes: { target: '_blank', rel: 'noopener noreferrer' },
+      }),
       SocialVideoBlock.configure({
         onVideoClick: handleVideoClick,
       }),
@@ -106,56 +112,87 @@ export default function NoteEditor() {
     },
     editorProps: {
       handlePaste(view, event) {
-        const text = event.clipboardData?.getData('text/plain');
-        if (!text) return false;
+        const text = event.clipboardData?.getData('text/plain') || '';
+        const html = event.clipboardData?.getData('text/html') || '';
 
         const lines = text.split('\n');
-        const socialLines = lines.filter((l) => detectSocialPlatform(l.trim()));
-        if (socialLines.length === 0) return false;
+        const hasSocialUrls = lines.some((l) => detectSocialPlatform(l.trim()));
 
-        // We have at least one social URL — take over the entire paste
+        // No social URLs — let TipTap handle natively (preserves headings, bold, links)
+        if (!hasSocialUrls) return false;
+
         event.preventDefault();
 
         const schema = view.state.schema;
         const nodes = [];
-        let textBuffer = [];
-
-        function flushText() {
-          const joined = textBuffer.join('\n');
-          // Split on double newlines for paragraph breaks
-          const paras = joined.split(/\n{2,}/);
-          for (const para of paras) {
-            const trimmed = para.trim();
-            if (trimmed) {
-              try {
-                nodes.push(schema.nodes.paragraph.create(null, schema.text(trimmed)));
-              } catch {
-                nodes.push(schema.nodes.paragraph.create());
-              }
-            }
-          }
-          textBuffer = [];
-        }
-
         const socialUrlsToSubmit = [];
 
-        for (const rawLine of lines) {
-          const line = rawLine.trim();
-          const platform = detectSocialPlatform(line);
-          if (platform && line) {
-            flushText();
-            nodes.push(schema.nodes.socialVideoBlock.create({
-              url: line,
-              platform,
-              videoId: null,
-              status: 'pending',
-            }));
-            socialUrlsToSubmit.push(line);
-          } else {
-            textBuffer.push(rawLine);
+        if (html) {
+          const domDoc = new window.DOMParser().parseFromString(html, 'text/html');
+          const pmParser = PMMParser.fromSchema(schema);
+          let buffer = domDoc.createElement('div');
+
+          function flushBuffer() {
+            if (!buffer.hasChildNodes()) return;
+            try {
+              const parsed = pmParser.parse(buffer);
+              parsed.content.forEach((n) => nodes.push(n));
+            } catch {
+              const t = buffer.textContent.trim();
+              if (t) nodes.push(schema.nodes.paragraph.create(null, schema.text(t)));
+            }
+            buffer = domDoc.createElement('div');
           }
+
+          for (const child of [...domDoc.body.childNodes]) {
+            const txt = (child.textContent || '').trim();
+            const platform = detectSocialPlatform(txt);
+            if (platform && child.nodeType === 1 /* ELEMENT_NODE */) {
+              flushBuffer();
+              nodes.push(schema.nodes.socialVideoBlock.create({
+                url: txt, platform, videoId: null, status: 'pending',
+              }));
+              socialUrlsToSubmit.push(txt);
+            } else {
+              buffer.appendChild(child.cloneNode(true));
+            }
+          }
+          flushBuffer();
+        } else {
+          // Plain text fallback
+          let textBuffer = [];
+
+          function flushText() {
+            const joined = textBuffer.join('\n');
+            const paras = joined.split(/\n{2,}/);
+            for (const para of paras) {
+              const trimmed = para.trim();
+              if (trimmed) {
+                try {
+                  nodes.push(schema.nodes.paragraph.create(null, schema.text(trimmed)));
+                } catch {
+                  nodes.push(schema.nodes.paragraph.create());
+                }
+              }
+            }
+            textBuffer = [];
+          }
+
+          for (const rawLine of lines) {
+            const line = rawLine.trim();
+            const platform = detectSocialPlatform(line);
+            if (platform && line) {
+              flushText();
+              nodes.push(schema.nodes.socialVideoBlock.create({
+                url: line, platform, videoId: null, status: 'pending',
+              }));
+              socialUrlsToSubmit.push(line);
+            } else {
+              textBuffer.push(rawLine);
+            }
+          }
+          flushText();
         }
-        flushText();
 
         if (nodes.length === 0) return false;
 
@@ -164,7 +201,6 @@ export default function NoteEditor() {
         tr.replaceWith(from, to, nodes);
         view.dispatch(tr);
 
-        // Submit all social URLs to backend and patch nodes with returned IDs
         for (const url of socialUrlsToSubmit) {
           submitVideo(url).then(({ id: videoId }) => {
             view.state.doc.descendants((node, pos) => {
@@ -174,11 +210,7 @@ export default function NoteEditor() {
                 !node.attrs.videoId
               ) {
                 view.dispatch(
-                  view.state.tr.setNodeMarkup(pos, null, {
-                    ...node.attrs,
-                    videoId,
-                    status: 'pending',
-                  })
+                  view.state.tr.setNodeMarkup(pos, null, { ...node.attrs, videoId, status: 'pending' })
                 );
                 return false;
               }
