@@ -53,7 +53,9 @@ function needsCookies(err) {
     msg.includes('HTTP Error 403') ||
     msg.includes('rate-limit reached or login required') ||
     msg.includes('login required') ||
-    msg.includes('login page')
+    msg.includes('login page') ||
+    msg.includes('unavailable for certain audiences') ||
+    msg.includes('may be inappropriate')
   );
 }
 
