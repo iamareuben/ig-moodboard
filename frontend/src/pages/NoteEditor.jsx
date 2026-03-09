@@ -5,7 +5,6 @@ import StarterKit from '@tiptap/starter-kit';
 import Image from '@tiptap/extension-image';
 import Placeholder from '@tiptap/extension-placeholder';
 import TiptapLink from '@tiptap/extension-link';
-import { DOMParser as PMMParser } from '@tiptap/pm/model';
 import { getNote, updateNote, submitVideo, listVideos } from '../api.js';
 import { SocialVideoBlock, detectSocialPlatform } from '../components/SocialVideoExtension.jsx';
 import { buildVideoFinderExtension } from '../components/VideoFinderExtension.js';
@@ -140,18 +139,22 @@ export default function NoteEditor() {
 
         if (html) {
           const domDoc = new window.DOMParser().parseFromString(html, 'text/html');
-          const pmParser = PMMParser.fromSchema(schema);
+          // ProseMirror caches the DOMParser on the schema after TipTap initialises it
+          const pmParser = schema.cached?.domParser;
           let buffer = domDoc.createElement('div');
 
           function flushBuffer() {
             if (!buffer.hasChildNodes()) return;
-            try {
-              const parsed = pmParser.parse(buffer);
-              parsed.content.forEach((n) => nodes.push(n));
-            } catch {
-              const t = buffer.textContent.trim();
-              if (t) nodes.push(schema.nodes.paragraph.create(null, schema.text(t)));
+            if (pmParser) {
+              try {
+                const parsed = pmParser.parse(buffer);
+                parsed.content.forEach((n) => nodes.push(n));
+                buffer = domDoc.createElement('div');
+                return;
+              } catch { /* fall through to text fallback */ }
             }
+            const t = buffer.textContent.trim();
+            if (t) nodes.push(schema.nodes.paragraph.create(null, schema.text(t)));
             buffer = domDoc.createElement('div');
           }
 
@@ -163,15 +166,18 @@ export default function NoteEditor() {
 
             function flushFrag() {
               if (!frag.hasChildNodes()) return;
-              const wrapper = domDoc.createElement('div');
-              wrapper.appendChild(frag);
-              try {
-                const parsed = pmParser.parse(wrapper);
-                parsed.content.forEach((n) => nodes.push(n));
-              } catch {
-                const t = frag.textContent.trim();
-                if (t) nodes.push(schema.nodes.paragraph.create(null, schema.text(t)));
+              if (pmParser) {
+                try {
+                  const wrapper = domDoc.createElement('div');
+                  wrapper.appendChild(frag);
+                  const parsed = pmParser.parse(wrapper);
+                  parsed.content.forEach((n) => nodes.push(n));
+                  frag = domDoc.createElement(tag);
+                  return;
+                } catch { /* fall through */ }
               }
+              const t = frag.textContent.trim();
+              if (t) nodes.push(schema.nodes.paragraph.create(null, schema.text(t)));
               frag = domDoc.createElement(tag);
             }
 
