@@ -8,7 +8,7 @@ import {
   syncVideoNoteLinks,
   getVideosForNote,
 } from '../services/db.js';
-import { listManifests } from '../services/storage.js';
+import { readManifest } from '../services/storage.js';
 
 const router = Router();
 
@@ -61,13 +61,15 @@ router.get('/:id', async (req, res) => {
     const note = getNoteById(req.params.id);
     if (!note) return res.status(404).json({ error: 'Note not found' });
 
-    // Attach linked video summaries
+    // Attach linked video summaries — read only the specific manifests needed
     const videoIds = getVideosForNote(req.params.id);
     let videos = [];
     if (videoIds.length > 0) {
-      const all = await listManifests();
-      videos = all
-        .filter((m) => videoIds.includes(m.id))
+      const manifests = await Promise.all(
+        videoIds.map((id) => readManifest(id).catch(() => null))
+      );
+      videos = manifests
+        .filter(Boolean)
         .map(({ shots, ...rest }) => ({
           ...rest,
           shotCount: shots ? shots.length : 0,

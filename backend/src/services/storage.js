@@ -35,15 +35,17 @@ export async function listManifests() {
     return [];
   }
 
-  const manifests = [];
-  for (const entry of entries) {
-    try {
-      const data = await readFile(join(VIDEOS_DIR, entry, 'manifest.json'), 'utf-8');
-      manifests.push(JSON.parse(data));
-    } catch {
-      // skip invalid entries
-    }
-  }
+  const results = await Promise.all(
+    entries.map(async (entry) => {
+      try {
+        const data = await readFile(join(VIDEOS_DIR, entry, 'manifest.json'), 'utf-8');
+        return JSON.parse(data);
+      } catch {
+        return null;
+      }
+    })
+  );
+  const manifests = results.filter(Boolean);
 
   return manifests.sort((a, b) => {
     const aTime = a.downloadedAt ? new Date(a.downloadedAt).getTime() : 0;
