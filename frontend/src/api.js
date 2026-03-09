@@ -148,6 +148,65 @@ export async function deleteNote(id) {
   return res.json();
 }
 
+export async function listNoteShares(noteId) {
+  const res = await fetch(`${BASE}/notes/${noteId}/shares`);
+  if (!res.ok) throw new Error('Failed to list shares');
+  return res.json();
+}
+
+export async function createNoteShare(noteId, mode) {
+  const res = await fetch(`${BASE}/notes/${noteId}/shares`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mode }),
+  });
+  if (!res.ok) throw new Error('Failed to create share');
+  return res.json();
+}
+
+export async function deleteNoteShare(noteId, shareId) {
+  const res = await fetch(`${BASE}/notes/${noteId}/shares/${shareId}`, { method: 'DELETE' });
+  if (!res.ok) throw new Error('Failed to revoke share');
+  return res.json();
+}
+
+export async function getSharedNote(shareId) {
+  const res = await fetch(`${BASE}/share/${shareId}`);
+  if (!res.ok) throw new Error(res.status === 404 ? 'Share link not found' : 'Failed to load shared note');
+  return res.json();
+}
+
+export async function updateSharedNote(shareId, data) {
+  const res = await fetch(`${BASE}/share/${shareId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || 'Failed to save');
+  }
+  return res.json();
+}
+
+export async function getSharedNoteHistory(shareId) {
+  const res = await fetch(`${BASE}/share/${shareId}/history`);
+  if (!res.ok) throw new Error('Failed to load history');
+  return res.json();
+}
+
+export async function getSharedNoteHistoryEntry(shareId, historyId) {
+  const res = await fetch(`${BASE}/share/${shareId}/history/${historyId}`);
+  if (!res.ok) throw new Error('Failed to load snapshot');
+  return res.json();
+}
+
+export async function listNoteHistory(noteId) {
+  const res = await fetch(`${BASE}/notes/${noteId}/history`);
+  if (!res.ok) throw new Error('Failed to load history');
+  return res.json();
+}
+
 // --- Accounts ---
 
 export async function listAccounts() {

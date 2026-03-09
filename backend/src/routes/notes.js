@@ -7,6 +7,12 @@ import {
   deleteNote,
   syncVideoNoteLinks,
   getVideosForNote,
+  createNoteShare,
+  listNoteShares,
+  deleteNoteShare,
+  createNoteHistoryEntry,
+  listNoteHistory,
+  getNoteHistoryEntry,
 } from '../services/db.js';
 import { readManifest } from '../services/storage.js';
 
@@ -111,6 +117,64 @@ router.delete('/:id', (req, res) => {
   try {
     deleteNote(req.params.id);
     res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/notes/:id/shares — create a share link
+router.post('/:id/shares', (req, res) => {
+  try {
+    const note = getNoteById(req.params.id);
+    if (!note) return res.status(404).json({ error: 'Note not found' });
+    const mode = req.body.mode === 'edit' ? 'edit' : 'read';
+    const share = createNoteShare(req.params.id, mode);
+    res.status(201).json(share);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/notes/:id/shares — list shares for a note
+router.get('/:id/shares', (req, res) => {
+  try {
+    const shares = listNoteShares(req.params.id);
+    res.json(shares);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/notes/:id/shares/:shareId — revoke a share
+router.delete('/:id/shares/:shareId', (req, res) => {
+  try {
+    deleteNoteShare(req.params.shareId);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PATCH /api/notes/:id — owner saves: snapshot history if there were shared edits since last owner save
+// (history is appended automatically by the shared edit endpoint; owner saves don't need to snapshot)
+
+// GET /api/notes/:id/history — list edit history
+router.get('/:id/history', (req, res) => {
+  try {
+    const note = getNoteById(req.params.id);
+    if (!note) return res.status(404).json({ error: 'Note not found' });
+    res.json(listNoteHistory(req.params.id));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/notes/:id/history/:historyId — get a snapshot
+router.get('/:id/history/:historyId', (req, res) => {
+  try {
+    const entry = getNoteHistoryEntry(req.params.historyId);
+    if (!entry || entry.note_id !== req.params.id) return res.status(404).json({ error: 'Not found' });
+    res.json(entry);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

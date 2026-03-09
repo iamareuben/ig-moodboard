@@ -49,6 +49,28 @@ db.exec(`
     cookies_txt TEXT NOT NULL,
     updated_at TEXT NOT NULL
   );
+
+  CREATE TABLE IF NOT EXISTS note_shares (
+    id TEXT PRIMARY KEY,
+    note_id TEXT NOT NULL,
+    mode TEXT NOT NULL DEFAULT 'read',
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (note_id) REFERENCES notes(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS note_shares_by_note ON note_shares(note_id);
+
+  CREATE TABLE IF NOT EXISTS note_history (
+    id TEXT PRIMARY KEY,
+    note_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    content TEXT NOT NULL,
+    saved_at TEXT NOT NULL,
+    editor_label TEXT,
+    FOREIGN KEY (note_id) REFERENCES notes(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS note_history_by_note ON note_history(note_id);
 `);
 
 // --- Accounts ---
@@ -173,6 +195,46 @@ export function getVideosForNote(noteId) {
 export function getVideoIdsInNotes() {
   const rows = db.prepare('SELECT DISTINCT video_id FROM video_notes').all();
   return new Set(rows.map((r) => r.video_id));
+}
+
+// --- Note Shares ---
+
+export function createNoteShare(noteId, mode) {
+  const id = crypto.randomUUID();
+  const now = new Date().toISOString();
+  db.prepare('INSERT INTO note_shares (id, note_id, mode, created_at) VALUES (?, ?, ?, ?)').run(id, noteId, mode, now);
+  return db.prepare('SELECT * FROM note_shares WHERE id = ?').get(id);
+}
+
+export function listNoteShares(noteId) {
+  return db.prepare('SELECT * FROM note_shares WHERE note_id = ? ORDER BY created_at DESC').all(noteId);
+}
+
+export function getNoteShare(shareId) {
+  return db.prepare('SELECT * FROM note_shares WHERE id = ?').get(shareId);
+}
+
+export function deleteNoteShare(shareId) {
+  db.prepare('DELETE FROM note_shares WHERE id = ?').run(shareId);
+}
+
+// --- Note History ---
+
+export function createNoteHistoryEntry(noteId, { title, content, editorLabel }) {
+  const id = crypto.randomUUID();
+  const now = new Date().toISOString();
+  const contentStr = typeof content === 'string' ? content : JSON.stringify(content);
+  db.prepare('INSERT INTO note_history (id, note_id, title, content, saved_at, editor_label) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(id, noteId, title, contentStr, now, editorLabel || null);
+  return id;
+}
+
+export function listNoteHistory(noteId) {
+  return db.prepare('SELECT id, note_id, title, saved_at, editor_label FROM note_history WHERE note_id = ? ORDER BY saved_at DESC').all(noteId);
+}
+
+export function getNoteHistoryEntry(historyId) {
+  return db.prepare('SELECT * FROM note_history WHERE id = ?').get(historyId);
 }
 
 // --- Platform Cookies ---

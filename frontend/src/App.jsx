@@ -9,6 +9,7 @@ import Accounts from './pages/Accounts.jsx';
 import AccountDetail from './pages/AccountDetail.jsx';
 import Settings from './pages/Settings.jsx';
 import Login from './pages/Login.jsx';
+import SharedNote from './pages/SharedNote.jsx';
 
 const PLATFORM_LABELS = { tiktok: 'TikTok', instagram: 'Instagram' };
 
@@ -161,6 +162,21 @@ function Nav() {
 }
 
 export default function App() {
+  // Public share links bypass auth entirely
+  if (window.location.pathname.startsWith('/share/')) {
+    return (
+      <BrowserRouter>
+        <Routes>
+          <Route path="/share/:shareId" element={<SharedNote />} />
+        </Routes>
+      </BrowserRouter>
+    );
+  }
+
+  return <AuthenticatedApp />;
+}
+
+function AuthenticatedApp() {
   const [authChecked, setAuthChecked] = useState(false);
   const [authenticated, setAuthenticated] = useState(false);
 

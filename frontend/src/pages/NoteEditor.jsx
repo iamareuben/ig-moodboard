@@ -9,6 +9,7 @@ import { getNote, updateNote, submitVideo, listVideos } from '../api.js';
 import { SocialVideoBlock, detectSocialPlatform } from '../components/SocialVideoExtension.jsx';
 import { buildVideoFinderExtension } from '../components/VideoFinderExtension.js';
 import VideoPane from '../components/VideoPane.jsx';
+import ShareModal from '../components/ShareModal.jsx';
 
 const SAVE_DEBOUNCE_MS = 1200;
 
@@ -69,6 +70,7 @@ export default function NoteEditor() {
   const [saveStatus, setSaveStatus] = useState('saved'); // 'saved' | 'saving' | 'unsaved'
   const [videoPane, setVideoPane] = useState(null); // videoId or null
   const [loadingVideo, setLoadingVideo] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
   const videoListRef = useRef([]);
   const saveTimer = useRef(null);
   const initialLoadDone = useRef(false);
@@ -426,6 +428,23 @@ export default function NoteEditor() {
         <span className="label" style={{ whiteSpace: 'nowrap', minWidth: '50px', textAlign: 'right' }}>
           {saveStatus === 'saving' ? 'Saving…' : saveStatus === 'unsaved' ? '●' : 'Saved'}
         </span>
+        <button
+          onClick={() => setShareOpen(true)}
+          style={{
+            fontFamily: 'var(--font-mono)',
+            fontSize: '10px',
+            letterSpacing: '0.06em',
+            textTransform: 'uppercase',
+            border: 'var(--border)',
+            background: 'transparent',
+            color: 'var(--color-black)',
+            padding: '4px 12px',
+            cursor: 'pointer',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          Share
+        </button>
       </div>
 
       <Toolbar editor={editor} />
@@ -446,6 +465,11 @@ export default function NoteEditor() {
       {/* VideoPane overlay */}
       {videoPane && (
         <VideoPane videoId={videoPane} onClose={() => setVideoPane(null)} />
+      )}
+
+      {/* Share modal */}
+      {shareOpen && (
+        <ShareModal noteId={id} onClose={() => setShareOpen(false)} />
       )}
     </div>
   );

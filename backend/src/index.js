@@ -11,6 +11,7 @@ import accountsRouter from './routes/accounts.js';
 import settingsRouter from './routes/settings.js';
 import importBookmarksRouter from './routes/importBookmarks.js';
 import authRouter from './routes/auth.js';
+import shareRouter from './routes/share.js';
 import { requireAuth } from './middleware/auth.js';
 
 // Initialise DB (side-effect import creates tables)
@@ -44,6 +45,9 @@ app.get('/api/health', (req, res) => res.json({ ok: true }));
 
 // Auth routes are public
 app.use('/api/auth', authRouter);
+
+// Share routes are public (no auth required)
+app.use('/api/share', shareRouter);
 
 // Everything else requires authentication
 app.use('/api', requireAuth);
