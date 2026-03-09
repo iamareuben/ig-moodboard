@@ -218,9 +218,12 @@ export default function NoteEditor() {
               }
               // If this element contains a social link somewhere inside, recurse into it
               // (we accept losing the wrapper element's own formatting, e.g. bold, to extract the link)
-              const hasSocialDescendant = node.querySelector?.('a[href]') &&
-                [...node.querySelectorAll('a[href]')].some(
+              const hasSocialDescendant =
+                [...(node.querySelectorAll?.('a[href]') || [])].some(
                   (a) => detectSocialPlatform(a.getAttribute('href') || ''),
+                ) ||
+                (node.textContent || '').split(/\s+/).some(
+                  (t) => detectSocialPlatform(t.trim()),
                 );
               if (hasSocialDescendant) {
                 for (const child of [...node.childNodes]) walk(child);
