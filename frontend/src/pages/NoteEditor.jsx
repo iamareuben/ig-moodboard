@@ -185,7 +185,23 @@ export default function NoteEditor() {
             // at any depth; their containing wrappers (strong, em, etc.) are split around them.
             function walk(node) {
               if (node.nodeType === 3) { // text node
+                // Check if the text itself is a bare social URL
+                const trimmed = node.textContent.trim();
+                const textPlatform = detectSocialPlatform(trimmed);
+                if (textPlatform) {
+                  flushFrag();
+                  nodes.push(schema.nodes.socialVideoBlock.create({
+                    url: trimmed, platform: textPlatform, videoId: null, status: 'pending',
+                  }));
+                  socialUrlsToSubmit.push(trimmed);
+                  return;
+                }
                 frag.appendChild(node.cloneNode(true));
+                return;
+              }
+              if (node.nodeName === 'BR') {
+                // Line break — flush current fragment as its own paragraph
+                flushFrag();
                 return;
               }
               if (node.nodeName === 'A') {
@@ -232,9 +248,11 @@ export default function NoteEditor() {
               }));
               socialUrlsToSubmit.push(txt);
             } else {
-              // Check for social links within the block
+              // Check for social links within the block — either <a href> or bare URL text
               const hasSocialLink = [...child.querySelectorAll('a[href]')].some(
                 (a) => detectSocialPlatform(a.getAttribute('href') || ''),
+              ) || (child.textContent || '').split(/\s+/).some(
+                (t) => detectSocialPlatform(t.trim()),
               );
               if (hasSocialLink) {
                 flushBuffer();
