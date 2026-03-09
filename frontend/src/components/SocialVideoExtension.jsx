@@ -309,8 +309,12 @@ export const SocialVideoBlock = Node.create({
  * Detect if a pasted string is a social video URL and return platform or null.
  */
 export function detectSocialPlatform(text) {
+  const trimmed = text.trim();
+  // Reject multi-token strings — the WHATWG URL parser silently strips newlines,
+  // which causes "url1\nurl2" to parse as a single (malformed) URL.
+  if (!trimmed || /\s/.test(trimmed)) return null;
   try {
-    const u = new URL(text.trim());
+    const u = new URL(trimmed);
     const host = u.hostname.replace(/^www\./, '');
     if (host === 'instagram.com') {
       // Must be a post/reel, not a profile
