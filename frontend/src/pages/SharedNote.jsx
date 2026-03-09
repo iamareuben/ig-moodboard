@@ -1,11 +1,12 @@
-import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
+import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { useParams } from 'react-router-dom';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Image from '@tiptap/extension-image';
 import TiptapLink from '@tiptap/extension-link';
-import { SocialVideoBlock } from '../components/SocialVideoExtension.jsx';
+import { SocialVideoBlock, SharedVideoContext } from '../components/SocialVideoExtension.jsx';
 import { getSharedNote, updateSharedNote, getSharedNoteHistory, getSharedNoteHistoryEntry } from '../api.js';
+import SharedVideoModal from '../components/SharedVideoModal.jsx';
 
 const SAVE_DEBOUNCE_MS = 1500;
 const MONO = 'var(--font-mono)';
@@ -41,19 +42,13 @@ function HistoryPanel({ shareId, onRestore, onClose }) {
 
   return (
     <div style={{
-      width: '280px',
-      borderLeft: 'var(--border)',
-      display: 'flex',
-      flexDirection: 'column',
-      flexShrink: 0,
+      width: '280px', borderLeft: 'var(--border)',
+      display: 'flex', flexDirection: 'column', flexShrink: 0,
       background: 'var(--color-white)',
     }}>
       <div style={{
-        padding: '12px 16px',
-        borderBottom: 'var(--border)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
+        padding: '12px 16px', borderBottom: 'var(--border)',
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
       }}>
         <span style={{ fontFamily: MONO, fontSize: '10px', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase' }}>
           Edit history
@@ -68,16 +63,10 @@ function HistoryPanel({ shareId, onRestore, onClose }) {
       <div style={{ overflowY: 'auto', flex: 1 }}>
         {loading ? (
           <div style={{ padding: '16px', fontFamily: MONO, fontSize: '11px', color: 'var(--color-muted)' }}>Loading…</div>
-        ) : entries && entries.length === 0 ? (
+        ) : !entries?.length ? (
           <div style={{ padding: '16px', fontFamily: MONO, fontSize: '11px', color: 'var(--color-muted)' }}>No history yet.</div>
-        ) : (entries || []).map((entry) => (
-          <div
-            key={entry.id}
-            style={{
-              padding: '10px 16px',
-              borderBottom: 'var(--border)',
-            }}
-          >
+        ) : entries.map((entry) => (
+          <div key={entry.id} style={{ padding: '10px 16px', borderBottom: 'var(--border)' }}>
             <div style={{ fontFamily: MONO, fontSize: '11px', fontWeight: 700, marginBottom: '2px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
               {entry.title || '(Untitled)'}
             </div>
@@ -109,16 +98,22 @@ export default function SharedNote() {
   const [error, setError] = useState(null);
   const [saveStatus, setSaveStatus] = useState('saved');
   const [historyOpen, setHistoryOpen] = useState(false);
-  const [historyKey, setHistoryKey] = useState(0); // bump to reload history panel
-  const [preloadedVideos, setPreloadedVideos] = useState(null);
+  const [historyKey, setHistoryKey] = useState(0);
+  const [preloadedVideos, setPreloadedVideos] = useState({});
+  const [videoModalId, setVideoModalId] = useState(null);
   const saveTimer = useRef(null);
   const initialLoadDone = useRef(false);
 
   const isEdit = share?.mode === 'edit';
-  const frameUrlBuilder = useCallback(
-    (videoId) => `/api/share/${shareId}/thumb/${videoId}`,
-    [shareId]
-  );
+
+  // Context value: provides video data + URL builders to SocialVideoBlock node views.
+  // Using context (not extension options) because TipTap node views don't re-render
+  // when extension options are mutated after creation.
+  const sharedCtx = useMemo(() => ({
+    videos: preloadedVideos,
+    frameUrlBuilder: (videoId, frameFile) => `/api/share/${shareId}/media/${videoId}/${frameFile}`,
+    onVideoClick: (videoId) => setVideoModalId(videoId),
+  }), [preloadedVideos, shareId]);
 
   const editor = useEditor({
     extensions: [
@@ -128,14 +123,11 @@ export default function SharedNote() {
         openOnClick: true,
         HTMLAttributes: { target: '_blank', rel: 'noopener noreferrer' },
       }),
-      SocialVideoBlock.configure({
-        onVideoClick: null,
-        preloadedVideos: null,  // will be updated after load
-        frameUrlBuilder,
-      }),
+      // onVideoClick is set here too (works at init time); context also provides it
+      SocialVideoBlock.configure({ onVideoClick: null }),
     ],
     content: '',
-    editable: false, // set after load
+    editable: false,
     onUpdate: ({ editor }) => {
       if (!initialLoadDone.current || !isEdit) return;
       setSaveStatus('unsaved');
@@ -145,19 +137,6 @@ export default function SharedNote() {
       }, SAVE_DEBOUNCE_MS);
     },
   });
-
-  // Update extension options when preloaded videos arrive
-  useEffect(() => {
-    if (editor && preloadedVideos) {
-      editor.extensionManager.extensions.forEach((ext) => {
-        if (ext.name === 'socialVideoBlock') {
-          ext.options.preloadedVideos = preloadedVideos;
-        }
-      });
-      // Force re-render of node views by doing a no-op transaction
-      editor.view.dispatch(editor.state.tr);
-    }
-  }, [editor, preloadedVideos]);
 
   useEffect(() => {
     getSharedNote(shareId)
@@ -171,9 +150,7 @@ export default function SharedNote() {
         } catch {
           editor?.commands.setContent('');
         }
-        if (share.mode === 'edit') {
-          editor?.setEditable(true);
-        }
+        if (share.mode === 'edit') editor?.setEditable(true);
         initialLoadDone.current = true;
         setSaveStatus('saved');
       })
@@ -188,7 +165,6 @@ export default function SharedNote() {
         content: JSON.stringify(content),
       });
       setSaveStatus('saved');
-      // bump history panel so it reloads if open
       setHistoryKey((k) => k + 1);
     } catch (err) {
       setSaveStatus('unsaved');
@@ -209,8 +185,7 @@ export default function SharedNote() {
 
   function handleRestore(entry) {
     try {
-      const content = JSON.parse(entry.content);
-      editor?.commands.setContent(content);
+      editor?.commands.setContent(JSON.parse(entry.content));
       setTitle(entry.title);
       setSaveStatus('unsaved');
       clearTimeout(saveTimer.current);
@@ -224,10 +199,7 @@ export default function SharedNote() {
 
   if (error) {
     return (
-      <div style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        height: '100vh', fontFamily: MONO, fontSize: '13px', color: '#666',
-      }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', fontFamily: MONO, fontSize: '13px', color: '#666' }}>
         {error === 'Share link not found' ? 'This share link has been revoked or does not exist.' : `Error: ${error}`}
       </div>
     );
@@ -235,10 +207,7 @@ export default function SharedNote() {
 
   if (!share) {
     return (
-      <div style={{
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        height: '100vh', fontFamily: MONO, fontSize: '11px', color: '#aaa',
-      }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', fontFamily: MONO, fontSize: '11px', color: '#aaa' }}>
         Loading…
       </div>
     );
@@ -248,44 +217,31 @@ export default function SharedNote() {
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: 'var(--color-bg)' }}>
       {/* Header */}
       <div style={{
-        background: 'var(--color-white)',
-        borderBottom: 'var(--border)',
-        padding: '10px 24px',
-        display: 'flex',
-        alignItems: 'center',
-        gap: '16px',
-        flexShrink: 0,
+        background: 'var(--color-white)', borderBottom: 'var(--border)',
+        padding: '10px 24px', display: 'flex', alignItems: 'center', gap: '16px', flexShrink: 0,
       }}>
-        {/* Branding */}
         <span style={{ fontFamily: MONO, fontSize: '10px', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--color-muted)', whiteSpace: 'nowrap' }}>
-          IG MSB
+          Vinspo
         </span>
 
-        {/* Title */}
         {isEdit ? (
           <input
             value={title}
             onChange={handleTitleChange}
             placeholder="Note title"
             style={{
-              flex: 1,
-              border: 'none', background: 'transparent',
+              flex: 1, border: 'none', background: 'transparent',
               fontFamily: MONO, fontSize: '13px', fontWeight: 700,
               letterSpacing: '0.04em', textTransform: 'uppercase',
               outline: 'none', padding: 0,
             }}
           />
         ) : (
-          <span style={{
-            flex: 1,
-            fontFamily: MONO, fontSize: '13px', fontWeight: 700,
-            letterSpacing: '0.04em', textTransform: 'uppercase',
-          }}>
+          <span style={{ flex: 1, fontFamily: MONO, fontSize: '13px', fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase' }}>
             {title || 'Untitled'}
           </span>
         )}
 
-        {/* Mode badge */}
         <span style={{
           fontFamily: MONO, fontSize: '9px', letterSpacing: '0.08em', textTransform: 'uppercase',
           border: 'var(--border)', padding: '2px 8px',
@@ -296,14 +252,12 @@ export default function SharedNote() {
           {isEdit ? 'Editable' : 'Read-only'}
         </span>
 
-        {/* Save status (edit mode only) */}
         {isEdit && (
           <span style={{ fontFamily: MONO, fontSize: '10px', color: 'var(--color-muted)', whiteSpace: 'nowrap', minWidth: '50px', textAlign: 'right' }}>
             {saveStatus === 'saving' ? 'Saving…' : saveStatus === 'unsaved' ? '●' : 'Saved'}
           </span>
         )}
 
-        {/* History button (edit mode only) */}
         {isEdit && (
           <button
             onClick={() => setHistoryOpen((v) => !v)}
@@ -322,14 +276,15 @@ export default function SharedNote() {
 
       {/* Body */}
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-        {/* Editor area */}
         <div style={{ flex: 1, overflowY: 'auto', display: 'flex', justifyContent: 'center', padding: '40px 24px' }}>
           <div style={{ width: '100%', maxWidth: '720px' }}>
-            <EditorContent editor={editor} />
+            {/* Wrap editor in context so node views get preloaded data + URL builders */}
+            <SharedVideoContext.Provider value={sharedCtx}>
+              <EditorContent editor={editor} />
+            </SharedVideoContext.Provider>
           </div>
         </div>
 
-        {/* History panel */}
         {isEdit && historyOpen && (
           <HistoryPanel
             key={historyKey}
@@ -339,6 +294,15 @@ export default function SharedNote() {
           />
         )}
       </div>
+
+      {/* Video modal */}
+      {videoModalId && (
+        <SharedVideoModal
+          shareId={shareId}
+          videoId={videoModalId}
+          onClose={() => setVideoModalId(null)}
+        />
+      )}
     </div>
   );
 }

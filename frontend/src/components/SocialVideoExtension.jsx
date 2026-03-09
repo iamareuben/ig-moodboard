@@ -1,7 +1,14 @@
 import { Node, mergeAttributes } from '@tiptap/core';
 import { ReactNodeViewRenderer, NodeViewWrapper } from '@tiptap/react';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useContext, createContext } from 'react';
 import { submitVideo, getVideo, frameFileUrl, retryVideo, refreshVideoStats } from '../api.js';
+
+/**
+ * Context provided by SharedNote to give node views access to preloaded video
+ * data and a public-safe frame URL builder — without needing extension option
+ * mutations (which don't trigger React re-renders in TipTap node views).
+ */
+export const SharedVideoContext = createContext(null);
 
 // Status polling for a single video
 function useVideoStatus(videoId, skip = false) {
@@ -43,13 +50,16 @@ function useVideoStatus(videoId, skip = false) {
 
 function SocialVideoBlockView({ node, updateAttributes, extension }) {
   const { url, videoId, platform, status: nodeStatus } = node.attrs;
-  const preloaded = extension.options.preloadedVideos?.[videoId] || null;
+
+  // Context wins over extension options — context is reactive, options are not
+  const sharedCtx = useContext(SharedVideoContext);
+  const preloaded = sharedCtx?.videos?.[videoId] || null;
+  const buildFrameUrl = sharedCtx?.frameUrlBuilder || extension.options.frameUrlBuilder || frameFileUrl;
+
   const { video: polledVideo, refetch } = useVideoStatus(videoId, !!preloaded);
   const video = preloaded || polledVideo;
   const [retrying, setRetrying] = useState(false);
   const [statsRefreshing, setStatsRefreshing] = useState(false);
-
-  const buildFrameUrl = extension.options.frameUrlBuilder || frameFileUrl;
 
   // Support both full manifest (shots array) and preloaded summary (heroFrameFile)
   const heroFrameFile = video?.shots?.length > 0
@@ -62,10 +72,11 @@ function SocialVideoBlockView({ node, updateAttributes, extension }) {
 
   function handleClick(e) {
     e.preventDefault();
-    if (videoId && extension.options.onVideoClick) {
-      extension.options.onVideoClick(videoId);
+    const onVideoClick = sharedCtx?.onVideoClick ?? extension.options.onVideoClick;
+    if (videoId && onVideoClick) {
+      onVideoClick(videoId);
     } else if (url) {
-      // Fallback (e.g. shared view): open the original social URL
+      // Fallback in shared read-only view: open the original social URL
       window.open(url, '_blank', 'noopener,noreferrer');
     }
   }
