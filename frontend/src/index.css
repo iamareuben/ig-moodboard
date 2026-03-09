@@ -206,6 +206,19 @@ a {
   margin: 12px 0;
 }
 
+.tiptap a {
+  color: var(--color-black);
+  border-bottom: 1px solid var(--color-black);
+  transition: background 0.1s, color 0.1s;
+  padding: 0 1px;
+}
+
+.tiptap a:hover {
+  background: var(--color-black);
+  color: var(--color-white);
+  border-bottom-color: transparent;
+}
+
 .tiptap p.is-editor-empty:first-child::before {
   content: attr(data-placeholder);
   color: var(--color-muted);
