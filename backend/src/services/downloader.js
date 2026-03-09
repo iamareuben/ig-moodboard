@@ -55,7 +55,9 @@ function needsCookies(err) {
     msg.includes('login required') ||
     msg.includes('login page') ||
     msg.includes('unavailable for certain audiences') ||
-    msg.includes('may be inappropriate')
+    msg.includes('may be inappropriate') ||
+    msg.includes('blocked') ||
+    msg.includes('your IP')
   );
 }
 
