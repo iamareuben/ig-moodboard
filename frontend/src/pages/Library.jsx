@@ -4,6 +4,13 @@ import { listVideos, frameFileUrl, parseAccount, retryVideo, syncIgBookmarks } f
 import AddVideoModal from '../components/AddVideoModal.jsx';
 import VideoPane from '../components/VideoPane.jsx';
 
+function creatorProfileUrl(platform, username) {
+  if (!username) return null;
+  if (platform === 'instagram') return `https://www.instagram.com/${username}/`;
+  if (platform === 'tiktok') return `https://www.tiktok.com/@${username}`;
+  return null;
+}
+
 function VideoCard({ video, onRetry, onPlay }) {
   const [hovered, setHovered] = useState(false);
   const thumbSrc = video.heroFrame ? frameFileUrl(video.id, video.heroFrame) : null;
@@ -13,6 +20,7 @@ function VideoCard({ video, onRetry, onPlay }) {
   const displayTitle = video.title || account || (video.platform === 'upload' ? 'UPLOAD' : video.platform?.toUpperCase()) || 'VIDEO';
   const videoTags = video.tags || [];
   const canRetry = video.status === 'error' || video.status === 'processing';
+  const profileUrl = creatorProfileUrl(video.platform, video.accountUsername);
 
   const date = new Date(video.downloadedAt).toLocaleDateString('en-GB', {
     day: '2-digit', month: 'short',
@@ -161,6 +169,34 @@ function VideoCard({ video, onRetry, onPlay }) {
         >
           ↻ Retry
         </button>
+      )}
+
+      {/* Creator profile link — bottom right, outside Link */}
+      {profileUrl && (
+        <a
+          href={profileUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            position: 'absolute',
+            bottom: '8px', right: '8px',
+            background: 'rgba(0,0,0,0.65)',
+            color: '#fff',
+            border: '1px solid rgba(255,255,255,0.3)',
+            padding: '4px 8px',
+            fontSize: '8px',
+            fontFamily: 'var(--font-mono)',
+            letterSpacing: '0.06em',
+            textTransform: 'uppercase',
+            textDecoration: 'none',
+            cursor: 'pointer',
+            zIndex: 3,
+          }}
+          title={`Open @${video.accountUsername} on ${video.platform}`}
+        >
+          ↗ {video.platform === 'instagram' ? 'IG' : 'TT'}
+        </a>
       )}
     </div>
   );

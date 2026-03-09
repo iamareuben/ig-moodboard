@@ -124,6 +124,16 @@ export default function VideoPane({ videoId, onClose }) {
     }
   }, [video?.status]);
 
+  // Mute when tab is hidden, unmute when visible
+  useEffect(() => {
+    function handleVisibilityChange() {
+      if (!videoRef.current) return;
+      videoRef.current.muted = document.hidden;
+    }
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, []);
+
   async function handleAddAnnotation() {
     const content = annotationInput.trim();
     if (!content) return;
@@ -373,23 +383,53 @@ export default function VideoPane({ videoId, onClose }) {
 
               {/* Account + URL */}
               <div style={{ padding: '12px 16px', borderBottom: 'var(--border)' }}>
-                {video.accountUsername && (
-                  <p style={{
-                    fontFamily: 'var(--font-mono)',
-                    fontSize: '10px',
-                    fontWeight: 700,
-                    letterSpacing: '0.06em',
-                    textTransform: 'uppercase',
-                    marginBottom: '4px',
-                  }}>
-                    @{video.accountUsername}
-                    {video.accountDisplayName && (
-                      <span style={{ fontWeight: 400, marginLeft: '6px', textTransform: 'none' }}>
-                        {video.accountDisplayName}
-                      </span>
-                    )}
-                  </p>
-                )}
+                {video.accountUsername && (() => {
+                  const profileUrl = video.platform === 'instagram'
+                    ? `https://www.instagram.com/${video.accountUsername}/`
+                    : video.platform === 'tiktok'
+                      ? `https://www.tiktok.com/@${video.accountUsername}`
+                      : null;
+                  return (
+                    <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', marginBottom: '4px', flexWrap: 'wrap' }}>
+                      <p style={{
+                        fontFamily: 'var(--font-mono)',
+                        fontSize: '10px',
+                        fontWeight: 700,
+                        letterSpacing: '0.06em',
+                        textTransform: 'uppercase',
+                        margin: 0,
+                      }}>
+                        @{video.accountUsername}
+                        {video.accountDisplayName && (
+                          <span style={{ fontWeight: 400, marginLeft: '6px', textTransform: 'none' }}>
+                            {video.accountDisplayName}
+                          </span>
+                        )}
+                      </p>
+                      {profileUrl && (
+                        <a
+                          href={profileUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          style={{
+                            fontFamily: 'var(--font-mono)',
+                            fontSize: '8px',
+                            letterSpacing: '0.06em',
+                            textTransform: 'uppercase',
+                            color: 'var(--color-black)',
+                            border: 'var(--border)',
+                            padding: '3px 7px',
+                            textDecoration: 'none',
+                            whiteSpace: 'nowrap',
+                            flexShrink: 0,
+                          }}
+                        >
+                          ↗ {video.platform === 'instagram' ? 'IG' : 'TT'} Profile
+                        </a>
+                      )}
+                    </div>
+                  );
+                })()}
                 <a
                   href={video.url}
                   target="_blank"
