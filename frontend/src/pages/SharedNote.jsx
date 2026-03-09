@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useRef } from 'react';
+import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import { useParams } from 'react-router-dom';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
@@ -110,10 +110,15 @@ export default function SharedNote() {
   const [saveStatus, setSaveStatus] = useState('saved');
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyKey, setHistoryKey] = useState(0); // bump to reload history panel
+  const [preloadedVideos, setPreloadedVideos] = useState(null);
   const saveTimer = useRef(null);
   const initialLoadDone = useRef(false);
 
   const isEdit = share?.mode === 'edit';
+  const frameUrlBuilder = useCallback(
+    (videoId) => `/api/share/${shareId}/thumb/${videoId}`,
+    [shareId]
+  );
 
   const editor = useEditor({
     extensions: [
@@ -123,7 +128,11 @@ export default function SharedNote() {
         openOnClick: true,
         HTMLAttributes: { target: '_blank', rel: 'noopener noreferrer' },
       }),
-      SocialVideoBlock.configure({ onVideoClick: null }),
+      SocialVideoBlock.configure({
+        onVideoClick: null,
+        preloadedVideos: null,  // will be updated after load
+        frameUrlBuilder,
+      }),
     ],
     content: '',
     editable: false, // set after load
@@ -137,11 +146,25 @@ export default function SharedNote() {
     },
   });
 
+  // Update extension options when preloaded videos arrive
+  useEffect(() => {
+    if (editor && preloadedVideos) {
+      editor.extensionManager.extensions.forEach((ext) => {
+        if (ext.name === 'socialVideoBlock') {
+          ext.options.preloadedVideos = preloadedVideos;
+        }
+      });
+      // Force re-render of node views by doing a no-op transaction
+      editor.view.dispatch(editor.state.tr);
+    }
+  }, [editor, preloadedVideos]);
+
   useEffect(() => {
     getSharedNote(shareId)
-      .then(({ share, note }) => {
+      .then(({ share, note, videos }) => {
         setShare(share);
         setTitle(note.title || '');
+        setPreloadedVideos(videos || {});
         try {
           const content = JSON.parse(note.content);
           editor?.commands.setContent(content);

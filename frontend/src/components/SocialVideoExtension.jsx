@@ -4,11 +4,11 @@ import React, { useEffect, useState } from 'react';
 import { submitVideo, getVideo, frameFileUrl, retryVideo, refreshVideoStats } from '../api.js';
 
 // Status polling for a single video
-function useVideoStatus(videoId) {
+function useVideoStatus(videoId, skip = false) {
   const [video, setVideo] = useState(null);
 
   useEffect(() => {
-    if (!videoId) return;
+    if (skip || !videoId) return;
     let cancelled = false;
 
     async function poll() {
@@ -26,10 +26,10 @@ function useVideoStatus(videoId) {
     }
     poll();
     return () => { cancelled = true; };
-  }, [videoId]);
+  }, [videoId, skip]);
 
   async function refetch() {
-    if (!videoId) return;
+    if (skip || !videoId) return;
     try {
       const v = await getVideo(videoId);
       setVideo(v);
@@ -43,14 +43,19 @@ function useVideoStatus(videoId) {
 
 function SocialVideoBlockView({ node, updateAttributes, extension }) {
   const { url, videoId, platform, status: nodeStatus } = node.attrs;
-  const { video, refetch } = useVideoStatus(videoId);
+  const preloaded = extension.options.preloadedVideos?.[videoId] || null;
+  const { video: polledVideo, refetch } = useVideoStatus(videoId, !!preloaded);
+  const video = preloaded || polledVideo;
   const [retrying, setRetrying] = useState(false);
   const [statsRefreshing, setStatsRefreshing] = useState(false);
 
-  const heroFrame = video?.shots?.length > 0
+  const buildFrameUrl = extension.options.frameUrlBuilder || frameFileUrl;
+
+  // Support both full manifest (shots array) and preloaded summary (heroFrameFile)
+  const heroFrameFile = video?.shots?.length > 0
     ? (video.shots.find((s) => s.id === video.heroShotId) || video.shots[0])?.frameFile
-    : null;
-  const thumbSrc = heroFrame && videoId ? frameFileUrl(videoId, heroFrame) : null;
+    : video?.heroFrameFile || null;
+  const thumbSrc = heroFrameFile && videoId ? buildFrameUrl(videoId, heroFrameFile) : null;
 
   const displayStatus = video?.status || nodeStatus || 'loading';
   const platformLabel = platform === 'instagram' ? 'IG' : platform === 'tiktok' ? 'TT' : '?';
@@ -59,6 +64,9 @@ function SocialVideoBlockView({ node, updateAttributes, extension }) {
     e.preventDefault();
     if (videoId && extension.options.onVideoClick) {
       extension.options.onVideoClick(videoId);
+    } else if (url) {
+      // Fallback (e.g. shared view): open the original social URL
+      window.open(url, '_blank', 'noopener,noreferrer');
     }
   }
 
@@ -280,6 +288,8 @@ export const SocialVideoBlock = Node.create({
   addOptions() {
     return {
       onVideoClick: null,
+      preloadedVideos: null,  // { [videoId]: videoSummary } — skips polling when set
+      frameUrlBuilder: null,  // (videoId, frameFile) => url — overrides default /media/ path
     };
   },
 

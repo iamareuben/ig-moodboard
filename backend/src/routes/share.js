@@ -1,4 +1,7 @@
 import { Router } from 'express';
+import { createReadStream } from 'fs';
+import { stat } from 'fs/promises';
+import { join } from 'path';
 import {
   getNoteShare,
   getNoteById,
@@ -7,7 +10,7 @@ import {
   listNoteHistory,
   getNoteHistoryEntry,
 } from '../services/db.js';
-import { readManifest } from '../services/storage.js';
+import { readManifest, VIDEOS_DIR } from '../services/storage.js';
 
 const router = Router();
 
@@ -25,7 +28,30 @@ function extractVideoIds(contentJson) {
   return [...ids];
 }
 
-// GET /api/share/:shareId — public, returns note content
+/** Load video summaries (title, status, stats, heroFrameFile) for a set of IDs. */
+async function loadVideoSummaries(videoIds) {
+  const summaries = {};
+  await Promise.all(videoIds.map(async (id) => {
+    try {
+      const manifest = await readManifest(id);
+      const heroShot = manifest.shots?.length
+        ? (manifest.shots.find((s) => s.id === manifest.heroShotId) || manifest.shots[0])
+        : null;
+      summaries[id] = {
+        id,
+        title: manifest.title || null,
+        status: manifest.status || 'unknown',
+        platform: manifest.platform || null,
+        accountUsername: manifest.accountUsername || null,
+        stats: manifest.stats || null,
+        heroFrameFile: heroShot?.frameFile || null,
+      };
+    } catch { /* manifest not found — skip */ }
+  }));
+  return summaries;
+}
+
+// GET /api/share/:shareId — public, returns note + preloaded video summaries
 router.get('/:shareId', async (req, res) => {
   try {
     const share = getNoteShare(req.params.shareId);
@@ -34,14 +60,53 @@ router.get('/:shareId', async (req, res) => {
     const note = getNoteById(share.note_id);
     if (!note) return res.status(404).json({ error: 'Note not found' });
 
-    res.json({ share, note });
+    const videoIds = extractVideoIds(note.content);
+    const videos = await loadVideoSummaries(videoIds);
+
+    res.json({ share, note, videos });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
+// GET /api/share/:shareId/thumb/:videoId — serve hero thumbnail publicly
+router.get('/:shareId/thumb/:videoId', async (req, res) => {
+  try {
+    const share = getNoteShare(req.params.shareId);
+    if (!share) return res.status(404).end();
+
+    const note = getNoteById(share.note_id);
+    if (!note) return res.status(404).end();
+
+    // Verify this video is actually referenced in the note
+    const videoIds = extractVideoIds(note.content);
+    if (!videoIds.includes(req.params.videoId)) return res.status(403).end();
+
+    const manifest = await readManifest(req.params.videoId).catch(() => null);
+    if (!manifest) return res.status(404).end();
+
+    const heroShot = manifest.shots?.length
+      ? (manifest.shots.find((s) => s.id === manifest.heroShotId) || manifest.shots[0])
+      : null;
+    if (!heroShot?.frameFile) return res.status(404).end();
+
+    const filePath = join(VIDEOS_DIR, req.params.videoId, heroShot.frameFile);
+    try {
+      await stat(filePath);
+    } catch {
+      return res.status(404).end();
+    }
+
+    res.setHeader('Content-Type', 'image/jpeg');
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    createReadStream(filePath).pipe(res);
+  } catch (err) {
+    res.status(500).end();
+  }
+});
+
 // PATCH /api/share/:shareId — public, update note (edit mode only)
-router.patch('/:shareId', (req, res) => {
+router.patch('/:shareId', async (req, res) => {
   try {
     const share = getNoteShare(req.params.shareId);
     if (!share) return res.status(404).json({ error: 'Share not found' });
@@ -60,7 +125,11 @@ router.patch('/:shareId', (req, res) => {
     });
 
     const updated = updateNote(share.note_id, { title, content });
-    res.json({ share, note: updated });
+
+    const videoIds = extractVideoIds(updated.content);
+    const videos = await loadVideoSummaries(videoIds);
+
+    res.json({ share, note: updated, videos });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
