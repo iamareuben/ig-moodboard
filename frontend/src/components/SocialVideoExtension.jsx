@@ -317,7 +317,8 @@ export function detectSocialPlatform(text) {
       if (/\/(p|reel|reels|tv)\//i.test(u.pathname)) return 'instagram';
     }
     if (host === 'tiktok.com' || host === 'vm.tiktok.com' || host === 't.tiktok.com' || host === 'vt.tiktok.com') {
-      return 'tiktok';
+      // Short-link domains (vm/t/vt) are always video links; tiktok.com must have /video/ in path
+      if (host !== 'tiktok.com' || /\/video\//i.test(u.pathname)) return 'tiktok';
     }
   } catch {
     // not a URL
