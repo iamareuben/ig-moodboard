@@ -4,7 +4,13 @@ import { listVideos, frameFileUrl, parseAccount, retryVideo, syncIgBookmarks } f
 import AddVideoModal from '../components/AddVideoModal.jsx';
 import VideoPane from '../components/VideoPane.jsx';
 
-function creatorProfileUrl(platform, username) {
+function creatorProfileUrl(video) {
+  const { platform, accountUsername, title } = video;
+  // For Instagram, uploader_id is numeric so accountUsername may be null;
+  // fall back to the handle embedded in yt-dlp's "Video by {handle}" title.
+  const username = accountUsername
+    || (platform === 'instagram' && title?.match(/^Video by (.+)$/i)?.[1])
+    || null;
   if (!username) return null;
   if (platform === 'instagram') return `https://www.instagram.com/${username}/`;
   if (platform === 'tiktok') return `https://www.tiktok.com/@${username}`;
@@ -20,7 +26,7 @@ function VideoCard({ video, onRetry, onPlay }) {
   const displayTitle = video.title || account || (video.platform === 'upload' ? 'UPLOAD' : video.platform?.toUpperCase()) || 'VIDEO';
   const videoTags = video.tags || [];
   const canRetry = video.status === 'error' || video.status === 'processing';
-  const profileUrl = creatorProfileUrl(video.platform, video.accountUsername);
+  const profileUrl = creatorProfileUrl(video);
 
   const date = new Date(video.downloadedAt).toLocaleDateString('en-GB', {
     day: '2-digit', month: 'short',

@@ -383,11 +383,14 @@ export default function VideoPane({ videoId, onClose }) {
 
               {/* Account + URL */}
               <div style={{ padding: '12px 16px', borderBottom: 'var(--border)' }}>
-                {video.accountUsername && (() => {
+                {(video.accountUsername || (video.platform === 'instagram' && video.title?.match(/^Video by (.+)$/i))) && (() => {
+                  const username = video.accountUsername
+                    || video.title?.match(/^Video by (.+)$/i)?.[1]
+                    || null;
                   const profileUrl = video.platform === 'instagram'
-                    ? `https://www.instagram.com/${video.accountUsername}/`
-                    : video.platform === 'tiktok'
-                      ? `https://www.tiktok.com/@${video.accountUsername}`
+                    ? `https://www.instagram.com/${username}/`
+                    : video.platform === 'tiktok' && username
+                      ? `https://www.tiktok.com/@${username}`
                       : null;
                   return (
                     <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', marginBottom: '4px', flexWrap: 'wrap' }}>
@@ -399,8 +402,8 @@ export default function VideoPane({ videoId, onClose }) {
                         textTransform: 'uppercase',
                         margin: 0,
                       }}>
-                        @{video.accountUsername}
-                        {video.accountDisplayName && (
+                        @{username}
+                        {video.accountDisplayName && video.accountDisplayName !== username && (
                           <span style={{ fontWeight: 400, marginLeft: '6px', textTransform: 'none' }}>
                             {video.accountDisplayName}
                           </span>

@@ -247,8 +247,12 @@ export async function getVideoMetadata(url) {
       webpageUrl: raw.webpage_url || url,
       uploaderUsername: (() => {
         const uid = raw.uploader_id?.replace(/^@/, '');
-        // Purely numeric = numeric user ID, not a handle — skip it
-        if (uid && /^\d+$/.test(uid)) return null;
+        // Purely numeric = numeric user ID, not a handle (e.g. Instagram)
+        // Fall back to raw.uploader which contains the actual handle for Instagram
+        if (uid && /^\d+$/.test(uid)) {
+          const fallback = raw.uploader?.replace(/^@/, '');
+          return (fallback && !/^\d+$/.test(fallback)) ? fallback : null;
+        }
         return uid || null;
       })(),
       uploaderDisplayName: raw.uploader || raw.channel || null,
