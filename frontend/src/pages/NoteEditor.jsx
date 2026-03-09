@@ -158,8 +158,8 @@ export default function NoteEditor() {
             buffer = domDoc.createElement('div');
           }
 
-          // Split a block element at any social <a> links it contains, inserting video
-          // cards as block-level breaks. Parts before/after keep the parent tag (h1, p, etc).
+          // Split a block element at any social <a> links it contains at any depth,
+          // inserting video cards as block-level breaks.
           function splitBlockAtSocialLinks(blockEl) {
             const tag = blockEl.tagName || 'P';
             let frag = domDoc.createElement(tag);
@@ -169,7 +169,7 @@ export default function NoteEditor() {
               if (pmParser) {
                 try {
                   const wrapper = domDoc.createElement('div');
-                  wrapper.appendChild(frag);
+                  wrapper.appendChild(frag.cloneNode(true));
                   const parsed = pmParser.parse(wrapper);
                   parsed.content.forEach((n) => nodes.push(n));
                   frag = domDoc.createElement(tag);
@@ -181,19 +181,39 @@ export default function NoteEditor() {
               frag = domDoc.createElement(tag);
             }
 
-            for (const cn of [...blockEl.childNodes]) {
-              const href = cn.nodeName === 'A' ? (cn.getAttribute?.('href') || '') : '';
-              const anchorPlatform = href ? detectSocialPlatform(href) : null;
-              if (anchorPlatform) {
-                flushFrag();
-                nodes.push(schema.nodes.socialVideoBlock.create({
-                  url: href, platform: anchorPlatform, videoId: null, status: 'pending',
-                }));
-                socialUrlsToSubmit.push(href);
+            // Recursively walk the DOM tree. Social <a> nodes become video cards
+            // at any depth; their containing wrappers (strong, em, etc.) are split around them.
+            function walk(node) {
+              if (node.nodeType === 3) { // text node
+                frag.appendChild(node.cloneNode(true));
+                return;
+              }
+              if (node.nodeName === 'A') {
+                const href = node.getAttribute('href') || '';
+                const platform = detectSocialPlatform(href);
+                if (platform) {
+                  flushFrag();
+                  nodes.push(schema.nodes.socialVideoBlock.create({
+                    url: href, platform, videoId: null, status: 'pending',
+                  }));
+                  socialUrlsToSubmit.push(href);
+                  return;
+                }
+              }
+              // If this element contains a social link somewhere inside, recurse into it
+              // (we accept losing the wrapper element's own formatting, e.g. bold, to extract the link)
+              const hasSocialDescendant = node.querySelector?.('a[href]') &&
+                [...node.querySelectorAll('a[href]')].some(
+                  (a) => detectSocialPlatform(a.getAttribute('href') || ''),
+                );
+              if (hasSocialDescendant) {
+                for (const child of [...node.childNodes]) walk(child);
               } else {
-                frag.appendChild(cn.cloneNode(true));
+                frag.appendChild(node.cloneNode(true));
               }
             }
+
+            for (const child of [...blockEl.childNodes]) walk(child);
             flushFrag();
           }
 
