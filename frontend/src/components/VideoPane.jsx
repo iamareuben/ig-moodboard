@@ -20,13 +20,19 @@ function StatBubble({ label, value }) {
   );
 }
 
-function ShotStrip({ videoId, shots, heroShotId }) {
+function ShotStrip({ videoId, shots, heroShotId, videoRef }) {
   return (
     <div style={{ overflowX: 'auto', paddingBottom: '8px' }}>
       <div style={{ display: 'flex', gap: '2px', minWidth: 'min-content' }}>
         {shots.map((shot) => (
           <div
             key={shot.id}
+            onClick={() => {
+              if (videoRef?.current && shot.timestamp != null) {
+                videoRef.current.currentTime = shot.timestamp;
+                videoRef.current.play().catch(() => {});
+              }
+            }}
             style={{
               width: '54px',
               height: '96px',
@@ -35,6 +41,7 @@ function ShotStrip({ videoId, shots, heroShotId }) {
               position: 'relative',
               outline: shot.id === heroShotId ? '2px solid var(--color-black)' : 'none',
               outlineOffset: '-2px',
+              cursor: videoRef ? 'pointer' : 'default',
             }}
           >
             <img
@@ -471,7 +478,7 @@ export default function VideoPane({ videoId, onClose }) {
                   <p className="label" style={{ marginBottom: '8px' }}>
                     {shots.length} shot{shots.length !== 1 ? 's' : ''}
                   </p>
-                  <ShotStrip videoId={videoId} shots={shots} heroShotId={video.heroShotId} />
+                  <ShotStrip videoId={videoId} shots={shots} heroShotId={video.heroShotId} videoRef={video.isCarousel ? null : videoRef} />
                 </div>
               )}
 
