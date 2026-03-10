@@ -112,7 +112,11 @@ export default function SharedNote() {
   const sharedCtx = useMemo(() => ({
     videos: preloadedVideos,
     frameUrlBuilder: (videoId, frameFile) => `/api/share/${shareId}/media/${videoId}/${frameFile}`,
-    onVideoClick: (videoId) => setVideoModalId(videoId),
+    onVideoClick: (videoId) => {
+      // Blur any focused element so the mobile keyboard doesn't open
+      if (document.activeElement) document.activeElement.blur();
+      setVideoModalId(videoId);
+    },
   }), [preloadedVideos, shareId]);
 
   const editor = useEditor({

@@ -13,11 +13,24 @@ export default function SharedVideoModal({ shareId, videoId, onClose }) {
   const frameUrl = (frameFile) => `/api/share/${shareId}/media/${videoId}/${frameFile}`;
   const playUrl = `/api/share/${shareId}/play/${videoId}`;
 
+  // Esc key closes modal
   useEffect(() => {
     const handler = (e) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
   }, [onClose]);
+
+  // Back button closes modal (mobile)
+  useEffect(() => {
+    history.pushState({ videoModal: videoId }, '');
+    const handler = () => onClose();
+    window.addEventListener('popstate', handler);
+    return () => {
+      window.removeEventListener('popstate', handler);
+      // If modal is closing normally (not via back), pop the state we pushed
+      if (history.state?.videoModal === videoId) history.back();
+    };
+  }, [videoId, onClose]);
 
   useEffect(() => {
     if (!videoId || !shareId) return;
