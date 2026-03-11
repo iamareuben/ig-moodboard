@@ -371,9 +371,24 @@ async function getIGUserId(username) {
     console.log(`[ig:userid] html page → ${r.status}, url: ${r.url}`);
     if (r.ok) {
       const html = await r.text();
-      const m = html.match(/instagram:\/\/user\?id=(\d+)/);
-      console.log(`[ig:userid] html meta match: ${m?.[1] ?? 'none'} (html length: ${html.length})`);
-      if (m?.[1]) return m[1];
+      // Try multiple patterns — IG changes page structure regularly
+      const patterns = [
+        /instagram:\/\/user\?id=(\d+)/,           // iOS app-link meta (older pages)
+        /profilePage_(\d{7,})/,                    // logging page ID embedded in JSON
+        /"pk":"(\d{7,})"/,                         // mobile API pk field (string)
+        /"pk":(\d{7,})/,                           // mobile API pk field (number)
+        /"owner_id":"(\d{7,})"/,                   // owner_id in media objects
+        new RegExp(`"username":"${username}"[^}]{0,400}"id":"(\\d{7,})"`), // username near id
+        new RegExp(`"id":"(\\d{7,})"[^}]{0,400}"username":"${username}"`), // id near username
+      ];
+      for (const pattern of patterns) {
+        const m = html.match(pattern);
+        if (m?.[1]) {
+          console.log(`[ig:userid] html match via ${pattern} → ${m[1]}`);
+          return m[1];
+        }
+      }
+      console.log(`[ig:userid] html: no pattern matched (length: ${html.length})`);
     }
   } catch (e) { console.warn('[ig:userid] html error:', e.message); }
 
