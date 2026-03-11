@@ -306,25 +306,78 @@ function igMobileHeaders() {
 }
 
 /**
- * Resolve an Instagram username to a numeric user ID via the mobile API.
+ * Resolve an Instagram username to a numeric user ID.
+ * Tries web_profile_info first, falls back to user search on 429/failure.
  */
 async function getIGUserId(username) {
   const { headers } = igMobileHeaders();
-  const res = await fetch(
+
+  // Primary: web_profile_info
+  const r1 = await fetch(
     `https://i.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`,
     { headers }
   );
-  if (!res.ok) throw new Error(`Instagram profile lookup failed: HTTP ${res.status}`);
-  const data = await res.json();
-  const userId = data?.data?.user?.id;
-  if (!userId) throw new Error(`Could not resolve Instagram user ID for @${username}`);
-  return userId;
+  if (r1.ok) {
+    const data = await r1.json();
+    const id = data?.data?.user?.id;
+    if (id) return id;
+  }
+
+  // Fallback 1 (429 / unexpected): search endpoint
+  await new Promise((r) => setTimeout(r, 2000));
+  const r2 = await fetch(
+    `https://i.instagram.com/api/v1/users/search/?q=${encodeURIComponent(username)}&count=10`,
+    { headers }
+  );
+  if (r2.ok) {
+    const data = await r2.json();
+    const user = (data.users || []).find((u) => u.username === username);
+    if (user?.pk) return String(user.pk);
+  }
+
+  // Fallback 2: www subdomain variant
+  const r3 = await fetch(
+    `https://www.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`,
+    { headers }
+  );
+  if (r3.ok) {
+    const data = await r3.json();
+    const id = data?.data?.user?.id;
+    if (id) return id;
+  }
+
+  throw new Error(`Could not resolve Instagram user ID for @${username} (tried 3 endpoints — may be rate limited, try again in a moment)`);
+}
+
+/**
+ * Map a raw IG mobile API media item to a normalised object.
+ */
+function mapIGItem(item) {
+  const code = item.code;
+  const collaborators = (item.coauthor_producers || []).map((c) => c.username).filter(Boolean);
+  const uploadDate = item.taken_at
+    ? new Date(item.taken_at * 1000).toISOString().slice(0, 10).replace(/-/g, '')
+    : null;
+  return {
+    id: item.id,
+    url: `https://www.instagram.com/p/${code}/`,
+    webpageUrl: `https://www.instagram.com/p/${code}/`,
+    title: item.caption?.text?.split('\n')[0]?.slice(0, 120) || '',
+    uploadDate,
+    thumbnailUrl: item.image_versions2?.candidates?.[0]?.url || null,
+    isCollab: collaborators.length > 0,
+    collaborators,
+    stats: {
+      viewCount: item.view_count ?? null,
+      likeCount: item.like_count ?? null,
+      commentCount: item.comment_count ?? null,
+    },
+  };
 }
 
 /**
  * Fetch ALL media from an Instagram user via the mobile feed API.
- * Returns entries oldest-first. Includes videos, reels, and carousels.
- * Collab post data (coauthor_producers) is extracted here directly.
+ * Returns entries oldest-first.
  */
 async function getIGUserAllMedia(username) {
   const { headers } = igMobileHeaders();
@@ -332,7 +385,6 @@ async function getIGUserAllMedia(username) {
 
   const items = [];
   let maxId = null;
-  let page = 0;
 
   while (true) {
     const url = `https://i.instagram.com/api/v1/feed/user/${userId}/?count=50${maxId ? `&max_id=${maxId}` : ''}`;
@@ -341,34 +393,12 @@ async function getIGUserAllMedia(username) {
     const data = await res.json();
 
     for (const item of (data.items || [])) {
-      const code = item.code;
-      if (!code) continue;
-
-      const collaborators = (item.coauthor_producers || [])
-        .map((c) => c.username)
-        .filter(Boolean);
-
-      // taken_at is Unix seconds → YYYYMMDD
-      const uploadDate = item.taken_at
-        ? new Date(item.taken_at * 1000).toISOString().slice(0, 10).replace(/-/g, '')
-        : null;
-
-      const thumbnail = item.image_versions2?.candidates?.[0]?.url || null;
-
-      items.push({
-        id: item.id,
-        url: `https://www.instagram.com/p/${code}/`,
-        title: item.caption?.text?.split('\n')[0]?.slice(0, 120) || '',
-        uploadDate,
-        thumbnailUrl: thumbnail,
-        isCollab: collaborators.length > 0,
-        collaborators,
-      });
+      if (!item.code) continue;
+      items.push(mapIGItem(item));
     }
 
     if (!data.more_available || !data.next_max_id) break;
     maxId = data.next_max_id;
-    page++;
 
     // Polite delay between pages
     await new Promise((r) => setTimeout(r, 1500 + Math.random() * 1000));
@@ -376,6 +406,21 @@ async function getIGUserAllMedia(username) {
 
   // API returns newest-first — reverse to get oldest-first
   return items.reverse();
+}
+
+/**
+ * Fetch a single page of media from an Instagram user (for Live Videos preview).
+ */
+async function getIGUserFeedPage(username, limit = 20) {
+  const { headers } = igMobileHeaders();
+  const userId = await getIGUserId(username);
+  const res = await fetch(
+    `https://i.instagram.com/api/v1/feed/user/${userId}/?count=${limit}`,
+    { headers }
+  );
+  if (!res.ok) throw new Error(`Instagram feed fetch failed: HTTP ${res.status}`);
+  const data = await res.json();
+  return (data.items || []).filter((item) => item.code).map(mapIGItem);
 }
 
 /**
@@ -420,10 +465,18 @@ export async function getAccountAllVideos(profileUrl) {
 }
 
 /**
- * Fetch an account's public video list using yt-dlp.
- * Returns array of video metadata objects (no download).
+ * Fetch a limited video list for an account (used by Live Videos preview).
+ * Instagram: mobile API. TikTok: yt-dlp.
  */
 export async function getAccountVideos(profileUrl, limit = 20) {
+  if (profileUrl.includes('instagram.com')) {
+    const match = profileUrl.match(/instagram\.com\/([^/?#]+)\/?/);
+    const username = match?.[1];
+    if (!username) throw new Error('Cannot extract username from Instagram URL');
+    return getIGUserFeedPage(username, limit);
+  }
+
+  // TikTok — yt-dlp still works fine
   const { stdout } = await withCookieArgs(profileUrl, (cookieArgs) =>
     runProcess('yt-dlp', [
       ...cookieArgs,
@@ -433,7 +486,6 @@ export async function getAccountVideos(profileUrl, limit = 20) {
       profileUrl,
     ])
   );
-  // yt-dlp dumps one JSON object per line for playlists
   return stdout.trim().split('\n').map((line) => {
     try {
       const raw = JSON.parse(line);
@@ -442,13 +494,14 @@ export async function getAccountVideos(profileUrl, limit = 20) {
         title: raw.title || '',
         webpageUrl: raw.webpage_url || raw.url || '',
         thumbnailUrl: raw.thumbnail || null,
-        uploaderUsername: raw.uploader_id?.replace(/^@/, '') || null,
+        isCollab: false,
+        collaborators: [],
         stats: {
           viewCount: raw.view_count ?? null,
           likeCount: raw.like_count ?? null,
           commentCount: raw.comment_count ?? null,
         },
-        uploadDate: raw.upload_date || null, // YYYYMMDD
+        uploadDate: raw.upload_date || null,
       };
     } catch {
       return null;
