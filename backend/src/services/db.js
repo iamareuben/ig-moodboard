@@ -45,9 +45,11 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS video_notes_by_video ON video_notes(video_id);
 
   CREATE TABLE IF NOT EXISTS platform_cookies (
-    platform TEXT PRIMARY KEY,
+    platform TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'main',
     cookies_txt TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (platform, role)
   );
 
   CREATE TABLE IF NOT EXISTS note_shares (
@@ -72,6 +74,26 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS note_history_by_note ON note_history(note_id);
 `);
+
+// Migrate platform_cookies if it still uses the old single-column PK (no role column)
+{
+  const cols = db.pragma('table_info(platform_cookies)').map((c) => c.name);
+  if (!cols.includes('role')) {
+    db.exec(`
+      CREATE TABLE platform_cookies_new (
+        platform TEXT NOT NULL,
+        role TEXT NOT NULL DEFAULT 'main',
+        cookies_txt TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (platform, role)
+      );
+      INSERT OR IGNORE INTO platform_cookies_new (platform, role, cookies_txt, updated_at)
+        SELECT platform, 'main', cookies_txt, updated_at FROM platform_cookies;
+      DROP TABLE platform_cookies;
+      ALTER TABLE platform_cookies_new RENAME TO platform_cookies;
+    `);
+  }
+}
 
 // --- Accounts ---
 
@@ -239,25 +261,25 @@ export function getNoteHistoryEntry(historyId) {
 
 // --- Platform Cookies ---
 
-export function getCookies(platform) {
-  return db.prepare('SELECT cookies_txt FROM platform_cookies WHERE platform = ?').get(platform);
+export function getCookies(platform, role = 'main') {
+  return db.prepare('SELECT cookies_txt FROM platform_cookies WHERE platform = ? AND role = ?').get(platform, role);
 }
 
-export function setCookies(platform, cookies_txt) {
+export function setCookies(platform, role = 'main', cookies_txt) {
   const now = new Date().toISOString();
   db.prepare(`
-    INSERT INTO platform_cookies (platform, cookies_txt, updated_at)
-    VALUES (?, ?, ?)
-    ON CONFLICT(platform) DO UPDATE SET cookies_txt = excluded.cookies_txt, updated_at = excluded.updated_at
-  `).run(platform, cookies_txt, now);
+    INSERT INTO platform_cookies (platform, role, cookies_txt, updated_at)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(platform, role) DO UPDATE SET cookies_txt = excluded.cookies_txt, updated_at = excluded.updated_at
+  `).run(platform, role, cookies_txt, now);
 }
 
-export function deleteCookies(platform) {
-  db.prepare('DELETE FROM platform_cookies WHERE platform = ?').run(platform);
+export function deleteCookies(platform, role = 'main') {
+  db.prepare('DELETE FROM platform_cookies WHERE platform = ? AND role = ?').run(platform, role);
 }
 
 export function listCookiePlatforms() {
-  return db.prepare('SELECT platform, updated_at FROM platform_cookies').all();
+  return db.prepare('SELECT platform, role, updated_at FROM platform_cookies').all();
 }
 
 export default db;

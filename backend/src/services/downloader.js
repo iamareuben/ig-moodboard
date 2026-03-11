@@ -108,8 +108,10 @@ async function withCookieArgs(url, fn) {
     if (!platform || !needsCookies(err)) throw err;
   }
 
-  // Login/rate-limit — try with stored cookies (no --impersonate, cookies carry the session)
-  const row = getCookies(platform);
+  // Login/rate-limit — try with stored cookies (no --impersonate, cookies carry the session).
+  // For Instagram, prefer the dedicated scraper slot to protect the main account.
+  const scraperRow = platform === 'instagram' ? getCookies('instagram', 'scraper') : null;
+  const row = scraperRow?.cookies_txt ? scraperRow : getCookies(platform, 'main');
   if (!row?.cookies_txt) {
     cookieStatus[platform] = 'needed';
     throw new Error(`Login required from ${platform} and no cookies stored. Add cookies in Settings.`);
@@ -244,6 +246,13 @@ export async function getVideoMetadata(url) {
       ])
     );
     const raw = JSON.parse(stdout);
+
+    // Collaborators: IG collab posts expose an array of objects with a username field
+    const rawCollabs = Array.isArray(raw.collaborators) ? raw.collaborators : [];
+    const collaborators = rawCollabs
+      .map((c) => (typeof c === 'string' ? c : c?.username))
+      .filter(Boolean);
+
     return {
       title: raw.title || raw.fulltitle || '',
       description: raw.description || '',
@@ -261,6 +270,8 @@ export async function getVideoMetadata(url) {
       })(),
       uploaderDisplayName: raw.uploader || raw.channel || null,
       thumbnailUrl: raw.thumbnail || null,
+      isCollab: collaborators.length > 0,
+      collaborators,
       stats: {
         viewCount: raw.view_count ?? null,
         likeCount: raw.like_count ?? null,
@@ -272,6 +283,36 @@ export async function getVideoMetadata(url) {
     console.warn('[metadata] yt-dlp dump-json failed:', err.message);
     return null;
   }
+}
+
+/**
+ * Fetch ALL videos from an account profile using yt-dlp flat-playlist mode.
+ * Returns URL list only — no per-video download. Use playlist-reverse for oldest-first.
+ */
+export async function getAccountAllVideos(profileUrl) {
+  const { stdout } = await withCookieArgs(profileUrl, (cookieArgs) =>
+    runProcess('yt-dlp', [
+      ...cookieArgs,
+      '--flat-playlist',
+      '--dump-json',
+      '--playlist-reverse', // oldest first
+      profileUrl,
+    ])
+  );
+  return stdout.trim().split('\n').map((line) => {
+    try {
+      const raw = JSON.parse(line);
+      return {
+        id: raw.id,
+        url: raw.url || raw.webpage_url || '',
+        title: raw.title || '',
+        uploadDate: raw.upload_date || null,
+        thumbnailUrl: raw.thumbnail || null,
+      };
+    } catch {
+      return null;
+    }
+  }).filter((v) => v && v.url);
 }
 
 /**

@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { randomUUID } from 'crypto';
 import {
   listAccounts,
   getAccount,
@@ -6,10 +7,93 @@ import {
   deleteAccount,
   upsertAccount,
 } from '../services/db.js';
-import { getAccountVideos } from '../services/downloader.js';
-import { listManifests } from '../services/storage.js';
+import { getAccountVideos, getAccountAllVideos } from '../services/downloader.js';
+import { listManifests, initVideoDir, writeManifest } from '../services/storage.js';
+import { canonicalizeUrl } from '../services/canonicalize.js';
+import { downloadAndProcess } from '../services/pipeline.js';
 
 const router = Router();
+
+// In-memory sync job store — resets on server restart, which is fine
+const syncJobs = new Map();
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function runSync(account, profileUrl, platform, jobId) {
+  const job = syncJobs.get(jobId);
+
+  try {
+    // Step 1: flat-playlist — get all video URLs (fast, one yt-dlp call)
+    job.phase = 'listing';
+    const videos = await getAccountAllVideos(profileUrl);
+    job.total = videos.length;
+    job.phase = 'syncing';
+
+    // Load manifests once upfront for dedup
+    const manifests = await listManifests();
+    const seenCanonicalIds = new Set(manifests.map((m) => m.canonicalId).filter(Boolean));
+    const seenNormalizedUrls = new Set(manifests.map((m) => m.normalizedUrl).filter(Boolean));
+
+    for (const video of videos) {
+      if (job.cancelled) break;
+
+      const url = video.url;
+      const canonical = canonicalizeUrl(url);
+
+      // Dedup check against seen sets
+      const isDup =
+        (canonical?.canonicalId && seenCanonicalIds.has(canonical.canonicalId)) ||
+        (canonical?.normalizedUrl && seenNormalizedUrls.has(canonical.normalizedUrl));
+
+      if (isDup) {
+        job.skipped++;
+        job.done++;
+        continue;
+      }
+
+      // Mark as seen so we don't double-queue within this run
+      if (canonical?.canonicalId) seenCanonicalIds.add(canonical.canonicalId);
+      if (canonical?.normalizedUrl) seenNormalizedUrls.add(canonical.normalizedUrl);
+
+      // Create manifest and fire pipeline
+      const id = randomUUID();
+      await initVideoDir(id);
+      await writeManifest(id, {
+        id,
+        url,
+        platform,
+        title: video.title || '',
+        downloadedAt: new Date().toISOString(),
+        status: 'pending',
+        duration: null,
+        shots: [],
+        heroShotId: null,
+        canonicalId: canonical?.canonicalId || null,
+        normalizedUrl: canonical?.normalizedUrl || null,
+        accountId: account.id,
+        accountUsername: account.ig_username || account.tt_username || null,
+        accountDisplayName: account.display_name || null,
+        isCollab: false,
+        collaborators: [],
+        stats: null,
+      });
+      downloadAndProcess(id, url); // fire and forget
+
+      job.queued++;
+      job.done++;
+
+      // Rate-limit: random 3–8 s between submissions to avoid hammering the platform
+      await sleep(3000 + Math.random() * 5000);
+    }
+
+    job.phase = 'done';
+    job.status = 'done';
+  } catch (err) {
+    job.status = 'error';
+    job.error = err.message;
+    console.error(`[sync] ${account.username}:`, err.message);
+  }
+}
 
 function buildProfileUrl(account, platform) {
   const p = platform || (account.ig_username ? 'instagram' : 'tiktok');
@@ -105,6 +189,56 @@ router.delete('/:id', (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// POST /api/accounts/:id/sync — start a full profile sync job
+router.post('/:id/sync', async (req, res) => {
+  try {
+    const account = getAccount(req.params.id);
+    if (!account) return res.status(404).json({ error: 'Account not found' });
+
+    const platform = req.body.platform || (account.ig_username ? 'instagram' : 'tiktok');
+    const profileUrl = buildProfileUrl(account, platform);
+    if (!profileUrl) return res.status(400).json({ error: 'No profile URL for this platform' });
+
+    const jobId = randomUUID();
+    syncJobs.set(jobId, {
+      status: 'running',
+      phase: 'listing',
+      platform,
+      profileUrl,
+      total: 0,
+      done: 0,
+      queued: 0,
+      skipped: 0,
+      error: null,
+      cancelled: false,
+      startedAt: new Date().toISOString(),
+    });
+
+    // Run async — respond immediately with jobId
+    runSync(account, profileUrl, platform, jobId);
+
+    res.json({ jobId });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/accounts/:id/sync/:jobId — poll sync job status
+router.get('/:id/sync/:jobId', (req, res) => {
+  const job = syncJobs.get(req.params.jobId);
+  if (!job) return res.status(404).json({ error: 'Job not found' });
+  res.json(job);
+});
+
+// DELETE /api/accounts/:id/sync/:jobId — cancel a running sync
+router.delete('/:id/sync/:jobId', (req, res) => {
+  const job = syncJobs.get(req.params.jobId);
+  if (!job) return res.status(404).json({ error: 'Job not found' });
+  job.cancelled = true;
+  job.status = 'cancelled';
+  res.json({ ok: true });
 });
 
 // GET /api/accounts/:id/live?platform=instagram&sort=views

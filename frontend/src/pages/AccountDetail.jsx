@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { getAccount, getAccountLive, updateAccount, submitVideo, frameFileUrl } from '../api.js';
+import { getAccount, getAccountLive, updateAccount, submitVideo, frameFileUrl, syncAccount, getSyncStatus, cancelSync } from '../api.js';
 
 const TYPE_OPTIONS = ['brand', 'creator', 'agency', 'media', 'personal'];
 
@@ -17,13 +17,25 @@ function SavedVideoCard({ video }) {
   return (
     <Link to={`/video/${video.id}`} style={{
       display: 'block', border: 'var(--border)', background: 'var(--color-white)',
-      textDecoration: 'none', color: 'inherit', overflow: 'hidden',
+      textDecoration: 'none', color: 'inherit', overflow: 'hidden', position: 'relative',
     }}>
       <div style={{ aspectRatio: '9/16', background: '#e0e0e0', overflow: 'hidden' }}>
         {thumbSrc && (
           <img src={thumbSrc} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
         )}
       </div>
+      {video.isCollab && (
+        <div style={{
+          position: 'absolute', top: '6px', left: '6px',
+          background: 'rgba(0,0,0,0.75)',
+          color: '#fff',
+          fontFamily: 'var(--font-mono)', fontSize: '7px', fontWeight: 700,
+          letterSpacing: '0.08em', textTransform: 'uppercase',
+          padding: '2px 5px',
+        }}>
+          COLLAB
+        </div>
+      )}
       <div style={{ padding: '8px 10px' }}>
         <p style={{
           fontFamily: 'var(--font-mono)', fontSize: '9px', fontWeight: 700,
@@ -33,6 +45,9 @@ function SavedVideoCard({ video }) {
         }}>
           {video.title || video.platform?.toUpperCase() || 'Video'}
         </p>
+        {video.isCollab && video.collaborators?.length > 0 && (
+          <p className="label" style={{ marginBottom: '2px' }}>w/ {video.collaborators.join(', ')}</p>
+        )}
         {video.stats?.viewCount != null && (
           <p className="label">{formatViews(video.stats.viewCount)} views</p>
         )}
@@ -228,6 +243,10 @@ export default function AccountDetail() {
   const [previewVideo, setPreviewVideo] = useState(null);
   const [editing, setEditing] = useState(false);
   const [editFields, setEditFields] = useState({});
+  const [collabFilter, setCollabFilter] = useState('all'); // 'all' | 'original' | 'collab'
+  const [syncPlatform, setSyncPlatform] = useState('instagram');
+  const [syncJob, setSyncJob] = useState(null); // { jobId, status, phase, total, done, queued, skipped, error }
+  const syncPollRef = useRef(null);
 
   useEffect(() => {
     getAccount(id).then((a) => {
@@ -239,9 +258,49 @@ export default function AccountDetail() {
         type_tag: a.type_tag || '',
         tags: (a.tags || []).join(', '),
       });
-      setLivePlatform(a.ig_username ? 'instagram' : 'tiktok');
+      const defaultPlatform = a.ig_username ? 'instagram' : 'tiktok';
+      setLivePlatform(defaultPlatform);
+      setSyncPlatform(defaultPlatform);
     }).catch(console.error).finally(() => setLoading(false));
   }, [id]);
+
+  // Poll sync job status every 2 s while running
+  useEffect(() => {
+    if (!syncJob?.jobId || syncJob.status === 'done' || syncJob.status === 'error' || syncJob.status === 'cancelled') {
+      clearInterval(syncPollRef.current);
+      return;
+    }
+    clearInterval(syncPollRef.current);
+    syncPollRef.current = setInterval(async () => {
+      try {
+        const updated = await getSyncStatus(id, syncJob.jobId);
+        setSyncJob((prev) => ({ ...prev, ...updated }));
+        if (updated.status === 'done' || updated.status === 'error' || updated.status === 'cancelled') {
+          clearInterval(syncPollRef.current);
+          // Refresh account data to show newly queued videos
+          getAccount(id).then(setAccount).catch(() => {});
+        }
+      } catch { /* ignore poll errors */ }
+    }, 2000);
+    return () => clearInterval(syncPollRef.current);
+  }, [syncJob?.jobId, syncJob?.status, id]);
+
+  async function handleStartSync() {
+    try {
+      const { jobId } = await syncAccount(id, syncPlatform);
+      setSyncJob({ jobId, status: 'running', phase: 'listing', total: 0, done: 0, queued: 0, skipped: 0, error: null });
+    } catch (err) {
+      setSyncJob({ status: 'error', error: err.message });
+    }
+  }
+
+  async function handleCancelSync() {
+    if (!syncJob?.jobId) return;
+    try {
+      await cancelSync(id, syncJob.jobId);
+      setSyncJob((prev) => ({ ...prev, status: 'cancelled' }));
+    } catch { /* ignore */ }
+  }
 
   async function fetchLive() {
     setLiveLoading(true);
@@ -398,22 +457,125 @@ export default function AccountDetail() {
         {/* Saved videos */}
         {account.savedVideos?.length > 0 && (
           <section style={{ marginBottom: '40px' }}>
-            <h2 style={{
-              fontFamily: 'var(--font-mono)', fontSize: '10px', fontWeight: 700,
-              letterSpacing: '0.08em', textTransform: 'uppercase',
-              marginBottom: '12px', color: 'var(--color-muted)',
-            }}>
-              Saved · {account.savedVideos.length}
-            </h2>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px', flexWrap: 'wrap' }}>
+              <h2 style={{
+                fontFamily: 'var(--font-mono)', fontSize: '10px', fontWeight: 700,
+                letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--color-muted)',
+              }}>
+                Saved · {account.savedVideos.length}
+              </h2>
+              {/* Collab filter */}
+              <div style={{ display: 'flex', gap: '2px' }}>
+                {[['all', 'All'], ['original', 'Original'], ['collab', 'Collab']].map(([val, label]) => (
+                  <button
+                    key={val}
+                    onClick={() => setCollabFilter(val)}
+                    style={{
+                      background: collabFilter === val ? 'var(--color-black)' : 'transparent',
+                      color: collabFilter === val ? 'var(--color-white)' : 'var(--color-black)',
+                    }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
             <div style={{
               display: 'grid',
               gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))',
               gap: '2px',
             }}>
-              {account.savedVideos.map((v) => <SavedVideoCard key={v.id} video={v} />)}
+              {account.savedVideos
+                .filter((v) => {
+                  if (collabFilter === 'collab') return v.isCollab;
+                  if (collabFilter === 'original') return !v.isCollab;
+                  return true;
+                })
+                .map((v) => <SavedVideoCard key={v.id} video={v} />)}
             </div>
           </section>
         )}
+
+        {/* Sync All section */}
+        <section style={{ marginBottom: '40px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px', flexWrap: 'wrap' }}>
+            <h2 style={{
+              fontFamily: 'var(--font-mono)', fontSize: '10px', fontWeight: 700,
+              letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--color-muted)',
+            }}>
+              Sync All Videos
+            </h2>
+            {/* Platform picker */}
+            <div style={{ display: 'flex', gap: '2px' }}>
+              {platforms.map(({ key, label }) => (
+                <button
+                  key={key}
+                  onClick={() => setSyncPlatform(key)}
+                  disabled={syncJob?.status === 'running'}
+                  style={{
+                    background: syncPlatform === key ? 'var(--color-black)' : 'transparent',
+                    color: syncPlatform === key ? 'var(--color-white)' : 'var(--color-black)',
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {(!syncJob || syncJob.status === 'done' || syncJob.status === 'error' || syncJob.status === 'cancelled') && (
+              <button className="primary" onClick={handleStartSync}>
+                Sync All
+              </button>
+            )}
+            {syncJob?.status === 'running' && (
+              <button onClick={handleCancelSync}>Cancel</button>
+            )}
+          </div>
+
+          {/* Progress */}
+          {syncJob && (
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--color-muted)', lineHeight: '1.7' }}>
+              {syncJob.status === 'running' && syncJob.phase === 'listing' && (
+                <p>Listing videos…</p>
+              )}
+              {syncJob.status === 'running' && syncJob.phase === 'syncing' && (
+                <p>
+                  {syncJob.done}/{syncJob.total} &nbsp;·&nbsp;
+                  {syncJob.queued} queued &nbsp;·&nbsp;
+                  {syncJob.skipped} already saved
+                </p>
+              )}
+              {syncJob.status === 'done' && (
+                <p style={{ color: 'green' }}>
+                  Done — {syncJob.queued} queued for download, {syncJob.skipped} already saved
+                </p>
+              )}
+              {syncJob.status === 'cancelled' && (
+                <p>Cancelled — {syncJob.queued} queued, {syncJob.skipped} already saved</p>
+              )}
+              {syncJob.status === 'error' && (
+                <p style={{ color: '#c00' }}>Error: {syncJob.error}</p>
+              )}
+              {/* Progress bar */}
+              {syncJob.status === 'running' && syncJob.total > 0 && (
+                <div style={{ marginTop: '6px', height: '3px', background: '#e0e0e0', width: '100%', maxWidth: '400px' }}>
+                  <div style={{
+                    height: '100%',
+                    background: 'var(--color-black)',
+                    width: `${Math.round((syncJob.done / syncJob.total) * 100)}%`,
+                    transition: 'width 0.3s',
+                  }} />
+                </div>
+              )}
+            </div>
+          )}
+
+          {!syncJob && (
+            <p className="label">
+              Pulls every video from this creator's profile — oldest to newest. New videos are queued for download automatically.
+              Uses the scraper IG account to protect your main.
+            </p>
+          )}
+        </section>
 
         {/* Live fetch */}
         <section>

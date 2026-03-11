@@ -1,8 +1,17 @@
 import React, { useEffect, useState } from 'react';
 
+const IG_STEPS = [
+  'Open www.instagram.com in your browser and make sure you are logged in.',
+  'Open DevTools (F12 or Cmd+Option+I) and go to the Network tab.',
+  'In the filter bar, type "www.instagram.com" to show only main-domain requests.',
+  'Reload the page. Click the first request in the list (the HTML document, type "Doc").',
+  'Right-click it → Copy → Copy as cURL. Paste below.',
+];
+
 const PLATFORMS = [
   {
     id: 'tiktok',
+    role: 'main',
     label: 'TikTok',
     domain: 'tiktok.com',
     steps: [
@@ -15,15 +24,19 @@ const PLATFORMS = [
   },
   {
     id: 'instagram',
-    label: 'Instagram',
+    role: 'main',
+    label: 'Instagram — Main account',
+    sublabel: 'Used for bookmarks and carousel imports. Keep this your real account.',
     domain: 'instagram.com',
-    steps: [
-      'Open www.instagram.com in your browser and make sure you are logged in.',
-      'Open DevTools (F12 or Cmd+Option+I) and go to the Network tab.',
-      'In the filter bar, type "www.instagram.com" to show only main-domain requests.',
-      'Reload the page. Click the first request in the list (the HTML document, type "Doc").',
-      'Right-click it → Copy → Copy as cURL. Paste below.',
-    ],
+    steps: IG_STEPS,
+  },
+  {
+    id: 'instagram',
+    role: 'scraper',
+    label: 'Instagram — Scraper account',
+    sublabel: 'Used for creator profile syncs. Use a dedicated throwaway account to protect your main.',
+    domain: 'instagram.com',
+    steps: IG_STEPS,
   },
 ];
 
@@ -32,12 +45,14 @@ function PlatformCard({ platform, savedAt, onSaved, onDeleted }) {
   const [status, setStatus] = useState(null); // null | 'saving' | 'ok' | 'error'
   const [errorMsg, setErrorMsg] = useState('');
 
+  const apiPath = `/api/settings/cookies/${platform.id}/${platform.role}`;
+
   async function handleSave() {
     if (!input.trim()) return;
     setStatus('saving');
     setErrorMsg('');
     try {
-      const res = await fetch(`/api/settings/cookies/${platform.id}`, {
+      const res = await fetch(apiPath, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ curlCommand: input }),
@@ -54,7 +69,7 @@ function PlatformCard({ platform, savedAt, onSaved, onDeleted }) {
   }
 
   async function handleDelete() {
-    await fetch(`/api/settings/cookies/${platform.id}`, { method: 'DELETE' });
+    await fetch(apiPath, { method: 'DELETE' });
     onDeleted();
   }
 
@@ -72,16 +87,31 @@ function PlatformCard({ platform, savedAt, onSaved, onDeleted }) {
         justifyContent: 'space-between',
         background: savedAt ? 'var(--color-black)' : 'transparent',
       }}>
-        <span style={{
-          fontFamily: 'var(--font-mono)',
-          fontSize: '11px',
-          fontWeight: 700,
-          letterSpacing: '0.08em',
-          textTransform: 'uppercase',
-          color: savedAt ? 'var(--color-white)' : 'var(--color-black)',
-        }}>
-          {platform.label}
-        </span>
+        <div>
+          <span style={{
+            fontFamily: 'var(--font-mono)',
+            fontSize: '11px',
+            fontWeight: 700,
+            letterSpacing: '0.08em',
+            textTransform: 'uppercase',
+            color: savedAt ? 'var(--color-white)' : 'var(--color-black)',
+            display: 'block',
+          }}>
+            {platform.label}
+          </span>
+          {platform.sublabel && (
+            <span style={{
+              fontFamily: 'var(--font-mono)',
+              fontSize: '10px',
+              color: savedAt ? '#aaa' : '#888',
+              letterSpacing: '0.03em',
+              marginTop: '2px',
+              display: 'block',
+            }}>
+              {platform.sublabel}
+            </span>
+          )}
+        </div>
         {savedAt ? (
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
             <span style={{
@@ -291,13 +321,13 @@ function RetryFailedSection() {
 }
 
 export default function Settings() {
-  const [saved, setSaved] = useState({}); // { tiktok: '2024-...', instagram: '...' }
+  const [saved, setSaved] = useState({}); // { 'tiktok:main': '2024-...', 'instagram:main': '...', 'instagram:scraper': '...' }
 
   async function loadSaved() {
     const res = await fetch('/api/settings/cookies');
     const rows = await res.json();
     const map = {};
-    for (const row of rows) map[row.platform] = row.updated_at;
+    for (const row of rows) map[`${row.platform}:${row.role}`] = row.updated_at;
     setSaved(map);
   }
 
@@ -333,9 +363,9 @@ export default function Settings() {
 
       {PLATFORMS.map((p) => (
         <PlatformCard
-          key={p.id}
+          key={`${p.id}:${p.role}`}
           platform={p}
-          savedAt={saved[p.id]}
+          savedAt={saved[`${p.id}:${p.role}`]}
           onSaved={loadSaved}
           onDeleted={loadSaved}
         />

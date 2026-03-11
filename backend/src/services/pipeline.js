@@ -22,6 +22,8 @@ export async function downloadAndProcess(id, url, retryCount = 0) {
       manifest.title = meta.title || manifest.title || '';
       manifest.stats = meta.stats;
       manifest.statsError = false;
+      manifest.isCollab = meta.isCollab ?? false;
+      manifest.collaborators = meta.collaborators ?? [];
       if (meta.canonicalId && !manifest.canonicalId) manifest.canonicalId = meta.canonicalId;
       if (meta.webpageUrl && !manifest.normalizedUrl) manifest.normalizedUrl = meta.webpageUrl;
 

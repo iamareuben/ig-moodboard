@@ -260,6 +260,31 @@ export async function getAccountLive(id, { platform, sort, limit } = {}) {
   return res.json();
 }
 
+export async function syncAccount(id, platform) {
+  const res = await fetch(`${BASE}/accounts/${id}/sync`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ platform }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || 'Failed to start sync');
+  }
+  return res.json(); // { jobId }
+}
+
+export async function getSyncStatus(accountId, jobId) {
+  const res = await fetch(`${BASE}/accounts/${accountId}/sync/${jobId}`);
+  if (!res.ok) throw new Error('Failed to get sync status');
+  return res.json();
+}
+
+export async function cancelSync(accountId, jobId) {
+  const res = await fetch(`${BASE}/accounts/${accountId}/sync/${jobId}`, { method: 'DELETE' });
+  if (!res.ok) throw new Error('Failed to cancel sync');
+  return res.json();
+}
+
 export async function searchVideos(q) {
   const res = await fetch(`${BASE}/videos/search?q=${encodeURIComponent(q)}`);
   if (!res.ok) throw new Error('Failed to search videos');

@@ -47,7 +47,9 @@ function toNetscapeCookies(domain, cookieStr) {
   return lines.join('\n');
 }
 
-// GET /api/settings/cookies — list which platforms have cookies stored
+const VALID_ROLES = ['main', 'scraper'];
+
+// GET /api/settings/cookies — list which platforms/roles have cookies stored
 router.get('/cookies', (req, res) => {
   res.json(listCookiePlatforms());
 });
@@ -57,11 +59,14 @@ router.get('/cookies/status', (req, res) => {
   res.json(getCookieStatus());
 });
 
-// POST /api/settings/cookies/:platform — save cookies from pasted cURL or raw cookie string
-router.post('/cookies/:platform', (req, res) => {
-  const { platform } = req.params;
+// POST /api/settings/cookies/:platform/:role? — save cookies (role defaults to 'main')
+router.post('/cookies/:platform/:role?', (req, res) => {
+  const { platform, role = 'main' } = req.params;
   if (!PLATFORM_DOMAINS[platform]) {
     return res.status(400).json({ error: 'Unknown platform. Use "tiktok" or "instagram".' });
+  }
+  if (!VALID_ROLES.includes(role)) {
+    return res.status(400).json({ error: `Unknown role. Use "main" or "scraper".` });
   }
   const { curlCommand } = req.body;
   if (!curlCommand?.trim()) {
@@ -72,15 +77,15 @@ router.post('/cookies/:platform', (req, res) => {
     return res.status(400).json({ error: 'No Cookie header found. Make sure you copied a request to the main domain (www.tiktok.com / www.instagram.com), not a CDN or font file.' });
   }
   const cookiesTxt = toNetscapeCookies(PLATFORM_DOMAINS[platform], cookieStr);
-  setCookies(platform, cookiesTxt);
-  clearCookieStatus(platform); // reset any 'needed'/'invalid' flag
+  setCookies(platform, role, cookiesTxt);
+  clearCookieStatus(platform);
   res.json({ ok: true });
 });
 
-// DELETE /api/settings/cookies/:platform — remove stored cookies
-router.delete('/cookies/:platform', (req, res) => {
-  const { platform } = req.params;
-  deleteCookies(platform);
+// DELETE /api/settings/cookies/:platform/:role? — remove stored cookies (role defaults to 'main')
+router.delete('/cookies/:platform/:role?', (req, res) => {
+  const { platform, role = 'main' } = req.params;
+  deleteCookies(platform, role);
   res.json({ ok: true });
 });
 
