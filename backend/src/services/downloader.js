@@ -330,11 +330,12 @@ async function getIGUserId(username) {
       `https://i.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`,
       { headers }
     );
+    console.log(`[ig:userid] web_profile_info → ${r.status}`);
     if (r.ok) {
       const id = (await r.json())?.data?.user?.id;
       if (id) return id;
     }
-  } catch { /* try next */ }
+  } catch (e) { console.warn('[ig:userid] web_profile_info error:', e.message); }
 
   await new Promise((r) => setTimeout(r, 1500));
 
@@ -344,11 +345,12 @@ async function getIGUserId(username) {
       `https://i.instagram.com/api/v1/users/search/?q=${encodeURIComponent(username)}&count=10`,
       { headers }
     );
+    console.log(`[ig:userid] search → ${r.status}`);
     if (r.ok) {
       const user = (await r.json()).users?.find((u) => u.username === username);
       if (user?.pk) return String(user.pk);
     }
-  } catch { /* try next */ }
+  } catch (e) { console.warn('[ig:userid] search error:', e.message); }
 
   await new Promise((r) => setTimeout(r, 1500));
 
@@ -365,14 +367,15 @@ async function getIGUserId(username) {
       'Sec-Fetch-Mode': 'navigate',
       'Sec-Fetch-Site': 'none',
     };
-    const r = await fetch(`https://www.instagram.com/${encodeURIComponent(username)}/`, { headers: browserHeaders });
+    const r = await fetch(`https://www.instagram.com/${username}/`, { headers: browserHeaders });
+    console.log(`[ig:userid] html page → ${r.status}, url: ${r.url}`);
     if (r.ok) {
       const html = await r.text();
-      // <meta property="al:ios:url" content="instagram://user?id=123456789" />
       const m = html.match(/instagram:\/\/user\?id=(\d+)/);
+      console.log(`[ig:userid] html meta match: ${m?.[1] ?? 'none'} (html length: ${html.length})`);
       if (m?.[1]) return m[1];
     }
-  } catch { /* fall through */ }
+  } catch (e) { console.warn('[ig:userid] html error:', e.message); }
 
   throw new Error(`Could not resolve Instagram user ID for @${username}. The account may be private, deleted, or temporarily rate-limited — try again in a few minutes.`);
 }
