@@ -311,7 +311,7 @@ function igMobileHeaders() {
 
 /**
  * Resolve an Instagram username to a numeric user ID.
- * Tries web_profile_info first, falls back to user search on 429/failure.
+ * Tries multiple strategies in order of reliability.
  */
 async function getIGUserId(username) {
   // IG handles are alphanumeric + underscores + periods — spaces mean it's a display name
@@ -321,43 +321,60 @@ async function getIGUserId(username) {
       `Edit the account and set the IG Username field to the actual @handle (e.g. chunkyfitcookie).`
     );
   }
+
   const { headers } = igMobileHeaders();
 
-  // Primary: web_profile_info
-  const r1 = await fetch(
-    `https://i.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`,
-    { headers }
-  );
-  if (r1.ok) {
-    const data = await r1.json();
-    const id = data?.data?.user?.id;
-    if (id) return id;
-  }
+  // Strategy 1: web_profile_info (mobile API)
+  try {
+    const r = await fetch(
+      `https://i.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`,
+      { headers }
+    );
+    if (r.ok) {
+      const id = (await r.json())?.data?.user?.id;
+      if (id) return id;
+    }
+  } catch { /* try next */ }
 
-  // Fallback 1 (429 / unexpected): search endpoint
-  await new Promise((r) => setTimeout(r, 2000));
-  const r2 = await fetch(
-    `https://i.instagram.com/api/v1/users/search/?q=${encodeURIComponent(username)}&count=10`,
-    { headers }
-  );
-  if (r2.ok) {
-    const data = await r2.json();
-    const user = (data.users || []).find((u) => u.username === username);
-    if (user?.pk) return String(user.pk);
-  }
+  await new Promise((r) => setTimeout(r, 1500));
 
-  // Fallback 2: www subdomain variant
-  const r3 = await fetch(
-    `https://www.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`,
-    { headers }
-  );
-  if (r3.ok) {
-    const data = await r3.json();
-    const id = data?.data?.user?.id;
-    if (id) return id;
-  }
+  // Strategy 2: user search endpoint
+  try {
+    const r = await fetch(
+      `https://i.instagram.com/api/v1/users/search/?q=${encodeURIComponent(username)}&count=10`,
+      { headers }
+    );
+    if (r.ok) {
+      const user = (await r.json()).users?.find((u) => u.username === username);
+      if (user?.pk) return String(user.pk);
+    }
+  } catch { /* try next */ }
 
-  throw new Error(`Could not resolve Instagram user ID for @${username} (tried 3 endpoints — may be rate limited, try again in a moment)`);
+  await new Promise((r) => setTimeout(r, 1500));
+
+  // Strategy 3: parse the iOS app-link meta tag from the profile HTML page.
+  // Instagram always embeds <meta property="al:ios:url" content="instagram://user?id=USERID">
+  // in the profile page — this works even when the API endpoints are rate-limited.
+  try {
+    const browserHeaders = {
+      Cookie: headers.Cookie,
+      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'Accept-Language': 'en-US,en;q=0.9',
+      'Sec-Fetch-Dest': 'document',
+      'Sec-Fetch-Mode': 'navigate',
+      'Sec-Fetch-Site': 'none',
+    };
+    const r = await fetch(`https://www.instagram.com/${encodeURIComponent(username)}/`, { headers: browserHeaders });
+    if (r.ok) {
+      const html = await r.text();
+      // <meta property="al:ios:url" content="instagram://user?id=123456789" />
+      const m = html.match(/instagram:\/\/user\?id=(\d+)/);
+      if (m?.[1]) return m[1];
+    }
+  } catch { /* fall through */ }
+
+  throw new Error(`Could not resolve Instagram user ID for @${username}. The account may be private, deleted, or temporarily rate-limited — try again in a few minutes.`);
 }
 
 /**
