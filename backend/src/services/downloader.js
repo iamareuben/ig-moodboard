@@ -290,10 +290,11 @@ export async function getVideoMetadata(url) {
 }
 
 /**
- * Build IG mobile API headers using scraper cookies (falling back to main).
- * Returns { headers, cookies } or throws if no cookies are stored.
+ * Build IG API headers using scraper cookies (falling back to main).
+ * Uses browser-like headers against www.instagram.com — more reliable from
+ * server IPs than the i.instagram.com mobile endpoints which rate-limit aggressively.
  */
-function igMobileHeaders() {
+function igHeaders(referer = 'https://www.instagram.com/') {
   const row = getCookies('instagram', 'scraper') || getCookies('instagram', 'main');
   if (!row?.cookies_txt) throw new Error('No Instagram cookies stored — add cookies in Settings');
   const cookies = parseCookiesTxt(row.cookies_txt);
@@ -303,11 +304,18 @@ function igMobileHeaders() {
       Cookie: cookieHeader,
       'X-CSRFToken': cookies.csrftoken || '',
       'X-IG-App-ID': '936619743392459',
-      'User-Agent': 'Instagram 319.0.0.41 Android (33/13; 420dpi; 1080x2400; samsung; SM-G991B; o1s; exynos2100)',
-      'Accept-Language': 'en-US',
+      'X-Requested-With': 'XMLHttpRequest',
+      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      'Accept': '*/*',
+      'Accept-Language': 'en-US,en;q=0.9',
+      'Referer': referer,
     },
+    cookies,
   };
 }
+
+// Keep alias for carousel which uses cookies directly
+const igMobileHeaders = igHeaders;
 
 /**
  * Resolve an Instagram username to a numeric user ID.
@@ -322,77 +330,33 @@ async function getIGUserId(username) {
     );
   }
 
-  const { headers } = igMobileHeaders();
+  const { headers } = igHeaders(`https://www.instagram.com/${username}/`);
 
-  // Strategy 1: web_profile_info (mobile API)
-  try {
-    const r = await fetch(
-      `https://i.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`,
-      { headers }
-    );
-    console.log(`[ig:userid] web_profile_info → ${r.status}`);
-    if (r.ok) {
-      const id = (await r.json())?.data?.user?.id;
-      if (id) return id;
-    }
-  } catch (e) { console.warn('[ig:userid] web_profile_info error:', e.message); }
+  // Primary: www.instagram.com web API with browser headers — works from server IPs
+  // where i.instagram.com mobile endpoints get rate-limited
+  const r = await fetch(
+    `https://www.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`,
+    { headers }
+  );
+  console.log(`[ig:userid] web_profile_info → ${r.status}`);
+  if (r.ok) {
+    const id = (await r.json())?.data?.user?.id;
+    if (id) return id;
+  }
 
-  await new Promise((r) => setTimeout(r, 1500));
+  // Fallback: i.instagram.com mobile endpoint
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+  const r2 = await fetch(
+    `https://i.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`,
+    { headers }
+  );
+  console.log(`[ig:userid] i.instagram fallback → ${r2.status}`);
+  if (r2.ok) {
+    const id = (await r2.json())?.data?.user?.id;
+    if (id) return id;
+  }
 
-  // Strategy 2: user search endpoint
-  try {
-    const r = await fetch(
-      `https://i.instagram.com/api/v1/users/search/?q=${encodeURIComponent(username)}&count=10`,
-      { headers }
-    );
-    console.log(`[ig:userid] search → ${r.status}`);
-    if (r.ok) {
-      const user = (await r.json()).users?.find((u) => u.username === username);
-      if (user?.pk) return String(user.pk);
-    }
-  } catch (e) { console.warn('[ig:userid] search error:', e.message); }
-
-  await new Promise((r) => setTimeout(r, 1500));
-
-  // Strategy 3: parse the iOS app-link meta tag from the profile HTML page.
-  // Instagram always embeds <meta property="al:ios:url" content="instagram://user?id=USERID">
-  // in the profile page — this works even when the API endpoints are rate-limited.
-  try {
-    const browserHeaders = {
-      Cookie: headers.Cookie,
-      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-      'Accept-Language': 'en-US,en;q=0.9',
-      'Sec-Fetch-Dest': 'document',
-      'Sec-Fetch-Mode': 'navigate',
-      'Sec-Fetch-Site': 'none',
-    };
-    const r = await fetch(`https://www.instagram.com/${username}/`, { headers: browserHeaders });
-    console.log(`[ig:userid] html page → ${r.status}, url: ${r.url}`);
-    if (r.ok) {
-      const html = await r.text();
-      // Try multiple patterns — IG changes page structure regularly
-      const patterns = [
-        /instagram:\/\/user\?id=(\d+)/,           // iOS app-link meta (older pages)
-        /profilePage_(\d{7,})/,                    // logging page ID embedded in JSON
-        /"pk":"(\d{7,})"/,                         // mobile API pk field (string)
-        /"pk":(\d{7,})/,                           // mobile API pk field (number)
-        /"owner_id":"(\d{7,})"/,                   // owner_id in media objects
-        new RegExp(`"username":"${username}"[^}]{0,400}"id":"(\\d{7,})"`), // username near id
-        new RegExp(`"id":"(\\d{7,})"[^}]{0,400}"username":"${username}"`), // id near username
-      ];
-      for (const pattern of patterns) {
-        const m = html.match(pattern);
-        if (m?.[1]) {
-          console.log(`[ig:userid] html match via ${pattern} → ${m[1]}`);
-          return m[1];
-        }
-      }
-      console.log(`[ig:userid] html: no pattern matched (length: ${html.length})`);
-    }
-  } catch (e) { console.warn('[ig:userid] html error:', e.message); }
-
-  throw new Error(`Could not resolve Instagram user ID for @${username}. The account may be private, deleted, or temporarily rate-limited — try again in a few minutes.`);
+  throw new Error(`Could not resolve Instagram user ID for @${username} (HTTP ${r.status}). Check that the account exists and your cookies are valid.`);
 }
 
 /**
@@ -426,14 +390,14 @@ function mapIGItem(item) {
  * Returns entries oldest-first.
  */
 async function getIGUserAllMedia(username) {
-  const { headers } = igMobileHeaders();
+  const { headers } = igHeaders(`https://www.instagram.com/${username}/`);
   const userId = await getIGUserId(username);
 
   const items = [];
   let maxId = null;
 
   while (true) {
-    const url = `https://i.instagram.com/api/v1/feed/user/${userId}/?count=50${maxId ? `&max_id=${maxId}` : ''}`;
+    const url = `https://www.instagram.com/api/v1/feed/user/${userId}/?count=50${maxId ? `&max_id=${maxId}` : ''}`;
     const res = await fetch(url, { headers });
     if (!res.ok) throw new Error(`Instagram feed fetch failed: HTTP ${res.status}`);
     const data = await res.json();
@@ -458,10 +422,10 @@ async function getIGUserAllMedia(username) {
  * Fetch a single page of media from an Instagram user (for Live Videos preview).
  */
 async function getIGUserFeedPage(username, limit = 20) {
-  const { headers } = igMobileHeaders();
+  const { headers } = igHeaders(`https://www.instagram.com/${username}/`);
   const userId = await getIGUserId(username);
   const res = await fetch(
-    `https://i.instagram.com/api/v1/feed/user/${userId}/?count=${limit}`,
+    `https://www.instagram.com/api/v1/feed/user/${userId}/?count=${limit}`,
     { headers }
   );
   if (!res.ok) throw new Error(`Instagram feed fetch failed: HTTP ${res.status}`);
