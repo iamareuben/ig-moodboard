@@ -260,11 +260,15 @@ export async function getVideoMetadata(url) {
       webpageUrl: raw.webpage_url || url,
       uploaderUsername: (() => {
         const uid = raw.uploader_id?.replace(/^@/, '');
-        // Purely numeric = numeric user ID, not a handle (e.g. Instagram)
-        // Fall back to raw.uploader which contains the actual handle for Instagram
+        // Purely numeric = numeric user ID (Instagram stores user IDs here, not handles)
         if (uid && /^\d+$/.test(uid)) {
+          // Prefer uploader_url which contains the actual profile URL with the real handle
+          // e.g. https://www.instagram.com/chunkyfitcookie/
+          const urlMatch = raw.uploader_url?.match(/instagram\.com\/([^/?#]+)\/?/);
+          if (urlMatch?.[1] && !/^\d+$/.test(urlMatch[1])) return urlMatch[1];
+          // Last resort: raw.uploader — but only if it looks like a handle (no spaces)
           const fallback = raw.uploader?.replace(/^@/, '');
-          return (fallback && !/^\d+$/.test(fallback)) ? fallback : null;
+          return (fallback && !/^\d+$/.test(fallback) && !/\s/.test(fallback)) ? fallback : null;
         }
         return uid || null;
       })(),
@@ -310,6 +314,13 @@ function igMobileHeaders() {
  * Tries web_profile_info first, falls back to user search on 429/failure.
  */
 async function getIGUserId(username) {
+  // IG handles are alphanumeric + underscores + periods — spaces mean it's a display name
+  if (/\s/.test(username)) {
+    throw new Error(
+      `"${username}" looks like a display name, not an Instagram handle. ` +
+      `Edit the account and set the IG Username field to the actual @handle (e.g. chunkyfitcookie).`
+    );
+  }
   const { headers } = igMobileHeaders();
 
   // Primary: web_profile_info
