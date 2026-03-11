@@ -73,8 +73,9 @@ async function runSync(account, profileUrl, platform, jobId) {
         accountId: account.id,
         accountUsername: account.ig_username || account.tt_username || null,
         accountDisplayName: account.display_name || null,
-        isCollab: false,
-        collaborators: [],
+        // Mobile API gives us collab data at listing time — no need to wait for pipeline
+        isCollab: video.isCollab || false,
+        collaborators: video.collaborators || [],
         stats: null,
       });
       downloadAndProcess(id, url); // fire and forget

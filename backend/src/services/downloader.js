@@ -286,16 +286,118 @@ export async function getVideoMetadata(url) {
 }
 
 /**
- * Fetch ALL videos from an account profile using yt-dlp flat-playlist mode.
- * Returns URL list only — no per-video download. Use playlist-reverse for oldest-first.
+ * Build IG mobile API headers using scraper cookies (falling back to main).
+ * Returns { headers, cookies } or throws if no cookies are stored.
+ */
+function igMobileHeaders() {
+  const row = getCookies('instagram', 'scraper') || getCookies('instagram', 'main');
+  if (!row?.cookies_txt) throw new Error('No Instagram cookies stored — add cookies in Settings');
+  const cookies = parseCookiesTxt(row.cookies_txt);
+  const cookieHeader = Object.entries(cookies).map(([k, v]) => `${k}=${v}`).join('; ');
+  return {
+    headers: {
+      Cookie: cookieHeader,
+      'X-CSRFToken': cookies.csrftoken || '',
+      'X-IG-App-ID': '936619743392459',
+      'User-Agent': 'Instagram 319.0.0.41 Android (33/13; 420dpi; 1080x2400; samsung; SM-G991B; o1s; exynos2100)',
+      'Accept-Language': 'en-US',
+    },
+  };
+}
+
+/**
+ * Resolve an Instagram username to a numeric user ID via the mobile API.
+ */
+async function getIGUserId(username) {
+  const { headers } = igMobileHeaders();
+  const res = await fetch(
+    `https://i.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`,
+    { headers }
+  );
+  if (!res.ok) throw new Error(`Instagram profile lookup failed: HTTP ${res.status}`);
+  const data = await res.json();
+  const userId = data?.data?.user?.id;
+  if (!userId) throw new Error(`Could not resolve Instagram user ID for @${username}`);
+  return userId;
+}
+
+/**
+ * Fetch ALL media from an Instagram user via the mobile feed API.
+ * Returns entries oldest-first. Includes videos, reels, and carousels.
+ * Collab post data (coauthor_producers) is extracted here directly.
+ */
+async function getIGUserAllMedia(username) {
+  const { headers } = igMobileHeaders();
+  const userId = await getIGUserId(username);
+
+  const items = [];
+  let maxId = null;
+  let page = 0;
+
+  while (true) {
+    const url = `https://i.instagram.com/api/v1/feed/user/${userId}/?count=50${maxId ? `&max_id=${maxId}` : ''}`;
+    const res = await fetch(url, { headers });
+    if (!res.ok) throw new Error(`Instagram feed fetch failed: HTTP ${res.status}`);
+    const data = await res.json();
+
+    for (const item of (data.items || [])) {
+      const code = item.code;
+      if (!code) continue;
+
+      const collaborators = (item.coauthor_producers || [])
+        .map((c) => c.username)
+        .filter(Boolean);
+
+      // taken_at is Unix seconds → YYYYMMDD
+      const uploadDate = item.taken_at
+        ? new Date(item.taken_at * 1000).toISOString().slice(0, 10).replace(/-/g, '')
+        : null;
+
+      const thumbnail = item.image_versions2?.candidates?.[0]?.url || null;
+
+      items.push({
+        id: item.id,
+        url: `https://www.instagram.com/p/${code}/`,
+        title: item.caption?.text?.split('\n')[0]?.slice(0, 120) || '',
+        uploadDate,
+        thumbnailUrl: thumbnail,
+        isCollab: collaborators.length > 0,
+        collaborators,
+      });
+    }
+
+    if (!data.more_available || !data.next_max_id) break;
+    maxId = data.next_max_id;
+    page++;
+
+    // Polite delay between pages
+    await new Promise((r) => setTimeout(r, 1500 + Math.random() * 1000));
+  }
+
+  // API returns newest-first — reverse to get oldest-first
+  return items.reverse();
+}
+
+/**
+ * Fetch ALL videos from an account profile.
+ * Instagram: uses the mobile API (reliable, no yt-dlp needed for listing).
+ * TikTok: uses yt-dlp flat-playlist.
  */
 export async function getAccountAllVideos(profileUrl) {
+  if (profileUrl.includes('instagram.com')) {
+    const match = profileUrl.match(/instagram\.com\/([^/?#]+)\/?/);
+    const username = match?.[1];
+    if (!username) throw new Error('Cannot extract username from Instagram URL');
+    return getIGUserAllMedia(username);
+  }
+
+  // TikTok — yt-dlp flat-playlist still works fine
   const { stdout } = await withCookieArgs(profileUrl, (cookieArgs) =>
     runProcess('yt-dlp', [
       ...cookieArgs,
       '--flat-playlist',
       '--dump-json',
-      '--playlist-reverse', // oldest first
+      '--playlist-reverse',
       profileUrl,
     ])
   );
@@ -308,6 +410,8 @@ export async function getAccountAllVideos(profileUrl) {
         title: raw.title || '',
         uploadDate: raw.upload_date || null,
         thumbnailUrl: raw.thumbnail || null,
+        isCollab: false,
+        collaborators: [],
       };
     } catch {
       return null;
