@@ -95,9 +95,17 @@ db.exec(`
   }
 }
 
+// Migrate accounts: add ig_user_id column if missing
+{
+  const cols = db.pragma('table_info(accounts)').map((c) => c.name);
+  if (!cols.includes('ig_user_id')) {
+    db.exec(`ALTER TABLE accounts ADD COLUMN ig_user_id TEXT`);
+  }
+}
+
 // --- Accounts ---
 
-export function upsertAccount({ id, username, display_name, ig_username, tt_username, avatar_url }) {
+export function upsertAccount({ id, username, display_name, ig_username, tt_username, avatar_url, ig_user_id }) {
   const now = new Date().toISOString();
   const existing = db.prepare('SELECT * FROM accounts WHERE username = ?').get(username);
   if (existing) {
@@ -107,16 +115,17 @@ export function upsertAccount({ id, username, display_name, ig_username, tt_user
         ig_username = COALESCE(?, ig_username),
         tt_username = COALESCE(?, tt_username),
         avatar_url = COALESCE(?, avatar_url),
+        ig_user_id = COALESCE(?, ig_user_id),
         updated_at = ?
       WHERE username = ?
-    `).run(display_name || null, ig_username || null, tt_username || null, avatar_url || null, now, username);
+    `).run(display_name || null, ig_username || null, tt_username || null, avatar_url || null, ig_user_id || null, now, username);
     return db.prepare('SELECT * FROM accounts WHERE username = ?').get(username);
   } else {
     const newId = id || crypto.randomUUID();
     db.prepare(`
-      INSERT INTO accounts (id, username, display_name, ig_username, tt_username, avatar_url, type_tag, tags, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, NULL, '[]', ?, ?)
-    `).run(newId, username, display_name || null, ig_username || null, tt_username || null, avatar_url || null, now, now);
+      INSERT INTO accounts (id, username, display_name, ig_username, tt_username, avatar_url, ig_user_id, type_tag, tags, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, NULL, '[]', ?, ?)
+    `).run(newId, username, display_name || null, ig_username || null, tt_username || null, avatar_url || null, ig_user_id || null, now, now);
     return db.prepare('SELECT * FROM accounts WHERE id = ?').get(newId);
   }
 }
@@ -130,7 +139,7 @@ export function getAccount(id) {
 }
 
 export function updateAccount(id, fields) {
-  const allowed = ['display_name', 'ig_username', 'tt_username', 'type_tag', 'tags'];
+  const allowed = ['display_name', 'ig_username', 'tt_username', 'ig_user_id', 'type_tag', 'tags'];
   const sets = [];
   const vals = [];
   for (const [k, v] of Object.entries(fields)) {

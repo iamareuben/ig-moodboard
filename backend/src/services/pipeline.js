@@ -37,6 +37,7 @@ export async function downloadAndProcess(id, url, retryCount = 0) {
           display_name: meta.uploaderDisplayName,
           ig_username: platform === 'instagram' ? uploaderUsername : undefined,
           tt_username: platform === 'tiktok' ? uploaderUsername : undefined,
+          ig_user_id: platform === 'instagram' ? (meta.uploaderUserId || undefined) : undefined,
           avatar_url: null,
         });
         manifest.accountId = acct.id;

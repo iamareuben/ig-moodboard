@@ -254,6 +254,7 @@ export default function AccountDetail() {
       setEditFields({
         display_name: a.display_name || '',
         ig_username: a.ig_username || '',
+        ig_user_id: a.ig_user_id || '',
         tt_username: a.tt_username || '',
         type_tag: a.type_tag || '',
         tags: (a.tags || []).join(', '),
@@ -334,6 +335,7 @@ export default function AccountDetail() {
     const updated = await updateAccount(id, {
       display_name: editFields.display_name || null,
       ig_username: editFields.ig_username || null,
+      ig_user_id: editFields.ig_user_id || null,
       tt_username: editFields.tt_username || null,
       type_tag: editFields.type_tag || null,
       tags,
@@ -416,6 +418,10 @@ export default function AccountDetail() {
             <div>
               <label className="label" style={{ display: 'block', marginBottom: '4px' }}>IG Username</label>
               <input value={editFields.ig_username} onChange={(e) => setEditFields((f) => ({ ...f, ig_username: e.target.value }))} />
+            </div>
+            <div>
+              <label className="label" style={{ display: 'block', marginBottom: '4px' }}>IG User ID</label>
+              <input value={editFields.ig_user_id} onChange={(e) => setEditFields((f) => ({ ...f, ig_user_id: e.target.value }))} placeholder="e.g. 47661754627" />
             </div>
             <div>
               <label className="label" style={{ display: 'block', marginBottom: '4px' }}>TT Username</label>

@@ -25,7 +25,7 @@ async function runSync(account, profileUrl, platform, jobId) {
   try {
     // Step 1: flat-playlist — get all video URLs (fast, one yt-dlp call)
     job.phase = 'listing';
-    const videos = await getAccountAllVideos(profileUrl);
+    const videos = await getAccountAllVideos(profileUrl, account.ig_user_id || null);
     job.total = videos.length;
     job.phase = 'syncing';
 
@@ -168,11 +168,12 @@ router.patch('/:id', (req, res) => {
     const account = getAccount(req.params.id);
     if (!account) return res.status(404).json({ error: 'Account not found' });
 
-    const { display_name, ig_username, tt_username, type_tag, tags } = req.body;
+    const { display_name, ig_username, tt_username, ig_user_id, type_tag, tags } = req.body;
     const updated = updateAccount(req.params.id, {
       display_name,
       ig_username,
       tt_username,
+      ig_user_id: ig_user_id || undefined,
       type_tag,
       tags: tags !== undefined ? JSON.stringify(tags) : undefined,
     });
@@ -254,7 +255,7 @@ router.get('/:id/live', async (req, res) => {
     if (!profileUrl) return res.status(400).json({ error: 'No profile URL available for this account/platform' });
 
     const limit = Math.min(parseInt(req.query.limit || '20', 10), 50);
-    const videos = await getAccountVideos(profileUrl, limit);
+    const videos = await getAccountVideos(profileUrl, limit, account.ig_user_id || null);
 
     // Sort by views desc if requested
     const sort = req.query.sort || 'date';

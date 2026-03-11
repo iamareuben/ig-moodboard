@@ -274,6 +274,10 @@ export async function getVideoMetadata(url) {
       })(),
       uploaderDisplayName: raw.uploader || raw.channel || null,
       thumbnailUrl: raw.thumbnail || null,
+      uploaderUserId: (() => {
+        const uid = raw.uploader_id;
+        return (uid && /^\d+$/.test(uid)) ? uid : null;
+      })(),
       isCollab: collaborators.length > 0,
       collaborators,
       stats: {
@@ -321,7 +325,8 @@ const igMobileHeaders = igHeaders;
  * Resolve an Instagram username to a numeric user ID.
  * Tries multiple strategies in order of reliability.
  */
-async function getIGUserId(username) {
+async function getIGUserId(username, cachedUserId = null) {
+  if (cachedUserId) return cachedUserId;
   // IG handles are alphanumeric + underscores + periods — spaces mean it's a display name
   if (/\s/.test(username)) {
     throw new Error(
@@ -389,9 +394,9 @@ function mapIGItem(item) {
  * Fetch ALL media from an Instagram user via the mobile feed API.
  * Returns entries oldest-first.
  */
-async function getIGUserAllMedia(username) {
+async function getIGUserAllMedia(username, cachedUserId = null) {
   const { headers } = igHeaders(`https://www.instagram.com/${username}/`);
-  const userId = await getIGUserId(username);
+  const userId = await getIGUserId(username, cachedUserId);
 
   const items = [];
   let maxId = null;
@@ -421,9 +426,9 @@ async function getIGUserAllMedia(username) {
 /**
  * Fetch a single page of media from an Instagram user (for Live Videos preview).
  */
-async function getIGUserFeedPage(username, limit = 20) {
+async function getIGUserFeedPage(username, limit = 20, cachedUserId = null) {
   const { headers } = igHeaders(`https://www.instagram.com/${username}/`);
-  const userId = await getIGUserId(username);
+  const userId = await getIGUserId(username, cachedUserId);
   const res = await fetch(
     `https://www.instagram.com/api/v1/feed/user/${userId}/?count=${limit}`,
     { headers }
@@ -438,12 +443,12 @@ async function getIGUserFeedPage(username, limit = 20) {
  * Instagram: uses the mobile API (reliable, no yt-dlp needed for listing).
  * TikTok: uses yt-dlp flat-playlist.
  */
-export async function getAccountAllVideos(profileUrl) {
+export async function getAccountAllVideos(profileUrl, userId = null) {
   if (profileUrl.includes('instagram.com')) {
     const match = profileUrl.match(/instagram\.com\/([^/?#]+)\/?/);
     const username = match?.[1];
     if (!username) throw new Error('Cannot extract username from Instagram URL');
-    return getIGUserAllMedia(username);
+    return getIGUserAllMedia(username, userId);
   }
 
   // TikTok — yt-dlp flat-playlist still works fine
@@ -478,12 +483,12 @@ export async function getAccountAllVideos(profileUrl) {
  * Fetch a limited video list for an account (used by Live Videos preview).
  * Instagram: mobile API. TikTok: yt-dlp.
  */
-export async function getAccountVideos(profileUrl, limit = 20) {
+export async function getAccountVideos(profileUrl, limit = 20, userId = null) {
   if (profileUrl.includes('instagram.com')) {
     const match = profileUrl.match(/instagram\.com\/([^/?#]+)\/?/);
     const username = match?.[1];
     if (!username) throw new Error('Cannot extract username from Instagram URL');
-    return getIGUserFeedPage(username, limit);
+    return getIGUserFeedPage(username, limit, userId);
   }
 
   // TikTok — yt-dlp still works fine
