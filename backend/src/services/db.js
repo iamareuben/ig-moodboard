@@ -107,7 +107,12 @@ db.exec(`
 
 export function upsertAccount({ id, username, display_name, ig_username, tt_username, avatar_url, ig_user_id }) {
   const now = new Date().toISOString();
-  const existing = db.prepare('SELECT * FROM accounts WHERE username = ?').get(username);
+  // Match by username first, then fall back to ig_username / tt_username so that manually-
+  // created accounts (which may have a display username ≠ IG handle) still get linked.
+  const existing =
+    db.prepare('SELECT * FROM accounts WHERE username = ?').get(username) ||
+    (ig_username ? db.prepare('SELECT * FROM accounts WHERE ig_username = ?').get(ig_username) : null) ||
+    (tt_username ? db.prepare('SELECT * FROM accounts WHERE tt_username = ?').get(tt_username) : null);
   if (existing) {
     db.prepare(`
       UPDATE accounts SET
