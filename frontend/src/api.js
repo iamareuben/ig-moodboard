@@ -260,17 +260,23 @@ export async function getAccountLive(id, { platform, sort, limit } = {}) {
   return res.json();
 }
 
-export async function syncAccount(id, platform) {
+export async function syncAccount(id, platform, { limit, autoTranscribe } = {}) {
   const res = await fetch(`${BASE}/accounts/${id}/sync`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ platform }),
+    body: JSON.stringify({ platform, limit: limit || null, autoTranscribe: !!autoTranscribe }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(body.error || 'Failed to start sync');
   }
   return res.json(); // { jobId }
+}
+
+export async function backfillAccountPull() {
+  const res = await fetch(`${BASE}/accounts/backfill`, { method: 'POST' });
+  if (!res.ok) throw new Error('Failed to run backfill');
+  return res.json(); // { updated }
 }
 
 export async function getSyncStatus(accountId, jobId) {

@@ -4,8 +4,10 @@ import { detectShots } from './shotDetector.js';
 import { upsertAccount } from './db.js';
 import { extractAccountFromUrl } from './canonicalize.js';
 import { scheduleRetry, isPermanentError } from './retryQueue.js';
+import { transcribeVideo } from './transcriber.js';
 
-export async function downloadAndProcess(id, url, retryCount = 0) {
+export async function downloadAndProcess(id, url, retryCount = 0, options = {}) {
+  const { autoTranscribe = false } = options;
   try {
     const vFile = videoFile(id);
     const fDir = framesDir(id);
@@ -71,6 +73,21 @@ export async function downloadAndProcess(id, url, retryCount = 0) {
     delete finalManifest.retryCount;
     delete finalManifest.nextRetryAt;
     await writeManifest(id, finalManifest);
+
+    // Auto-transcribe if requested (fire after manifest saved so status is 'ready')
+    if (autoTranscribe) {
+      try {
+        console.log(`[pipeline] ${id}: auto-transcribing…`);
+        const transcript = await transcribeVideo(vFile);
+        const tManifest = await readManifest(id);
+        tManifest.transcript = { ...transcript, createdAt: new Date().toISOString() };
+        await writeManifest(id, tManifest);
+        console.log(`[pipeline] ${id}: transcription done`);
+      } catch (tErr) {
+        console.error(`[pipeline] ${id}: transcription failed —`, tErr.message);
+        // Non-fatal: video is already ready, just log the error
+      }
+    }
   } catch (err) {
     // "No video formats found" or ffprobe failure = carousel/photo — try downloading as images
     const isCarouselCandidate = /No video formats found/i.test(err.message) || /ffprobe exited with code/i.test(err.message);

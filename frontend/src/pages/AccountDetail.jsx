@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { getAccount, getAccountLive, updateAccount, submitVideo, frameFileUrl, syncAccount, getSyncStatus, cancelSync } from '../api.js';
+import { getAccount, getAccountLive, updateAccount, submitVideo, frameFileUrl, syncAccount, getSyncStatus, cancelSync, backfillAccountPull } from '../api.js';
 
 const TYPE_OPTIONS = ['brand', 'creator', 'agency', 'media', 'personal'];
 
@@ -245,7 +245,10 @@ export default function AccountDetail() {
   const [editFields, setEditFields] = useState({});
   const [collabFilter, setCollabFilter] = useState('all'); // 'all' | 'original' | 'collab'
   const [syncPlatform, setSyncPlatform] = useState('instagram');
+  const [syncLimit, setSyncLimit] = useState('');
+  const [autoTranscribe, setAutoTranscribe] = useState(false);
   const [syncJob, setSyncJob] = useState(null); // { jobId, status, phase, total, done, queued, skipped, error }
+  const [backfillStatus, setBackfillStatus] = useState(null);
   const syncPollRef = useRef(null);
 
   useEffect(() => {
@@ -288,10 +291,21 @@ export default function AccountDetail() {
 
   async function handleStartSync() {
     try {
-      const { jobId } = await syncAccount(id, syncPlatform);
-      setSyncJob({ jobId, status: 'running', phase: 'listing', total: 0, done: 0, queued: 0, skipped: 0, error: null });
+      const limit = syncLimit ? parseInt(syncLimit, 10) : null;
+      const { jobId } = await syncAccount(id, syncPlatform, { limit, autoTranscribe });
+      setSyncJob({ jobId, status: 'running', phase: 'listing', total: 0, done: 0, queued: 0, skipped: 0, error: null, limit, autoTranscribe });
     } catch (err) {
       setSyncJob({ status: 'error', error: err.message });
+    }
+  }
+
+  async function handleBackfill() {
+    setBackfillStatus('running');
+    try {
+      const { updated } = await backfillAccountPull();
+      setBackfillStatus(`Backfilled ${updated} video${updated !== 1 ? 's' : ''}`);
+    } catch (err) {
+      setBackfillStatus(`Error: ${err.message}`);
     }
   }
 
@@ -502,14 +516,14 @@ export default function AccountDetail() {
           </section>
         )}
 
-        {/* Sync All section */}
+        {/* Sync section */}
         <section style={{ marginBottom: '40px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px', flexWrap: 'wrap' }}>
             <h2 style={{
               fontFamily: 'var(--font-mono)', fontSize: '10px', fontWeight: 700,
               letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--color-muted)',
             }}>
-              Sync All Videos
+              Pull Videos
             </h2>
             {/* Platform picker */}
             <div style={{ display: 'flex', gap: '2px' }}>
@@ -527,9 +541,43 @@ export default function AccountDetail() {
                 </button>
               ))}
             </div>
+            {/* Limit input */}
+            <input
+              type="number"
+              min="1"
+              max="200"
+              placeholder="All"
+              value={syncLimit}
+              onChange={(e) => setSyncLimit(e.target.value)}
+              disabled={syncJob?.status === 'running'}
+              style={{
+                width: '60px',
+                fontFamily: 'var(--font-mono)',
+                fontSize: '10px',
+                padding: '4px 7px',
+                border: 'var(--border)',
+                background: 'var(--color-white)',
+              }}
+              title="Number of most recent videos to pull (leave blank for all)"
+            />
+            {/* Auto-transcribe checkbox */}
+            <label style={{
+              display: 'flex', alignItems: 'center', gap: '5px',
+              fontFamily: 'var(--font-mono)', fontSize: '9px',
+              letterSpacing: '0.04em', textTransform: 'uppercase',
+              cursor: 'pointer', userSelect: 'none',
+            }}>
+              <input
+                type="checkbox"
+                checked={autoTranscribe}
+                onChange={(e) => setAutoTranscribe(e.target.checked)}
+                disabled={syncJob?.status === 'running'}
+              />
+              Auto-transcribe
+            </label>
             {(!syncJob || syncJob.status === 'done' || syncJob.status === 'error' || syncJob.status === 'cancelled') && (
               <button className="primary" onClick={handleStartSync}>
-                Sync All
+                {syncLimit ? `Pull Last ${syncLimit}` : 'Sync All'}
               </button>
             )}
             {syncJob?.status === 'running' && (
@@ -548,11 +596,13 @@ export default function AccountDetail() {
                   {syncJob.done}/{syncJob.total} &nbsp;·&nbsp;
                   {syncJob.queued} queued &nbsp;·&nbsp;
                   {syncJob.skipped} already saved
+                  {syncJob.autoTranscribe && ' · auto-transcribe on'}
                 </p>
               )}
               {syncJob.status === 'done' && (
                 <p style={{ color: 'green' }}>
                   Done — {syncJob.queued} queued for download, {syncJob.skipped} already saved
+                  {syncJob.autoTranscribe && ' · transcription will run after each download'}
                 </p>
               )}
               {syncJob.status === 'cancelled' && (
@@ -577,10 +627,27 @@ export default function AccountDetail() {
 
           {!syncJob && (
             <p className="label">
-              Pulls every video from this creator's profile — oldest to newest. New videos are queued for download automatically.
+              Enter a number to pull the most recent N videos, or leave blank to sync all.
+              Auto-transcribe runs faster-whisper after each download completes.
               Uses the scraper IG account to protect your main.
             </p>
           )}
+
+          {/* Backfill */}
+          <div style={{ marginTop: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <button
+              onClick={handleBackfill}
+              disabled={backfillStatus === 'running'}
+              style={{ fontSize: '9px', fontFamily: 'var(--font-mono)', letterSpacing: '0.04em', textTransform: 'uppercase' }}
+            >
+              {backfillStatus === 'running' ? 'Backfilling…' : 'Backfill Account-Pull Flag'}
+            </button>
+            {backfillStatus && backfillStatus !== 'running' && (
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: '9px', color: 'var(--color-muted)' }}>
+                {backfillStatus}
+              </span>
+            )}
+          </div>
         </section>
 
         {/* Live fetch */}

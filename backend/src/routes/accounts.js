@@ -8,7 +8,7 @@ import {
   upsertAccount,
 } from '../services/db.js';
 import { getAccountVideos, getAccountAllVideos } from '../services/downloader.js';
-import { listManifests, initVideoDir, writeManifest } from '../services/storage.js';
+import { listManifests, initVideoDir, readManifest, writeManifest } from '../services/storage.js';
 import { canonicalizeUrl } from '../services/canonicalize.js';
 import { downloadAndProcess } from '../services/pipeline.js';
 
@@ -19,13 +19,15 @@ const syncJobs = new Map();
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function runSync(account, profileUrl, platform, jobId) {
+async function runSync(account, profileUrl, platform, jobId, { limit = null, autoTranscribe = false } = {}) {
   const job = syncJobs.get(jobId);
 
   try {
-    // Step 1: flat-playlist — get all video URLs (fast, one yt-dlp call)
+    // Step 1: list videos — limited pull uses getAccountVideos, full sync uses getAccountAllVideos
     job.phase = 'listing';
-    const videos = await getAccountAllVideos(profileUrl, account.ig_user_id || null);
+    const videos = limit
+      ? await getAccountVideos(profileUrl, limit, account.ig_user_id || null)
+      : await getAccountAllVideos(profileUrl, account.ig_user_id || null);
     job.total = videos.length;
     job.phase = 'syncing';
 
@@ -37,7 +39,8 @@ async function runSync(account, profileUrl, platform, jobId) {
     for (const video of videos) {
       if (job.cancelled) break;
 
-      const url = video.url;
+      const url = video.url || video.webpageUrl;
+      if (!url) { job.done++; continue; }
       const canonical = canonicalizeUrl(url);
 
       // Dedup check against seen sets
@@ -77,8 +80,9 @@ async function runSync(account, profileUrl, platform, jobId) {
         isCollab: video.isCollab || false,
         collaborators: video.collaborators || [],
         stats: null,
+        isAccountPull: true,
       });
-      downloadAndProcess(id, url); // fire and forget
+      downloadAndProcess(id, url, 0, { autoTranscribe }); // fire and forget
 
       job.queued++;
       job.done++;
@@ -104,6 +108,25 @@ function buildProfileUrl(account, platform) {
   if (p === 'tiktok') return `https://www.tiktok.com/@${username}`;
   return null;
 }
+
+// POST /api/accounts/backfill — mark all existing account-linked videos as isAccountPull
+router.post('/backfill', async (req, res) => {
+  try {
+    const manifests = await listManifests();
+    let updated = 0;
+    for (const m of manifests) {
+      if (m.accountId && !m.isAccountPull) {
+        const full = await readManifest(m.id);
+        full.isAccountPull = true;
+        await writeManifest(m.id, full);
+        updated++;
+      }
+    }
+    res.json({ updated });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // POST /api/accounts — manually create an account
 router.post('/', (req, res) => {
@@ -193,7 +216,7 @@ router.delete('/:id', (req, res) => {
   }
 });
 
-// POST /api/accounts/:id/sync — start a full profile sync job
+// POST /api/accounts/:id/sync — start a profile sync job (full or limited)
 router.post('/:id/sync', async (req, res) => {
   try {
     const account = getAccount(req.params.id);
@@ -203,12 +226,17 @@ router.post('/:id/sync', async (req, res) => {
     const profileUrl = buildProfileUrl(account, platform);
     if (!profileUrl) return res.status(400).json({ error: 'No profile URL for this platform' });
 
+    const limit = req.body.limit ? parseInt(req.body.limit, 10) : null;
+    const autoTranscribe = req.body.autoTranscribe === true;
+
     const jobId = randomUUID();
     syncJobs.set(jobId, {
       status: 'running',
       phase: 'listing',
       platform,
       profileUrl,
+      limit,
+      autoTranscribe,
       total: 0,
       done: 0,
       queued: 0,
@@ -219,7 +247,7 @@ router.post('/:id/sync', async (req, res) => {
     });
 
     // Run async — respond immediately with jobId
-    runSync(account, profileUrl, platform, jobId);
+    runSync(account, profileUrl, platform, jobId, { limit, autoTranscribe });
 
     res.json({ jobId });
   } catch (err) {

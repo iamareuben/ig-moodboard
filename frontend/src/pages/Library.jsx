@@ -214,6 +214,7 @@ export default function Library() {
   const [loading, setLoading] = useState(true);
   const [previewVideoId, setPreviewVideoId] = useState(null);
   const [noteFilter, setNoteFilter] = useState('all'); // 'all' | 'in-note' | 'not-in-note'
+  const [showAccountPulls, setShowAccountPulls] = useState(false);
   const [importStatus, setImportStatus] = useState(null); // null | { state: 'loading'|'done'|'error', msg }
   const [syncing, setSyncing] = useState(false);
 
@@ -271,8 +272,10 @@ export default function Library() {
 
   const photoCount = videos.filter((v) => v.status === 'not_video').length;
   const videoOnlyVideos = videos.filter((v) => v.status !== 'not_video' && v.status !== 'archived');
+  const accountPullCount = videoOnlyVideos.filter((v) => v.isAccountPull).length;
 
   const filteredVideos = videoOnlyVideos.filter((v) => {
+    if (!showAccountPulls && v.isAccountPull) return false;
     if (noteFilter === 'in-note') return v.inNote;
     if (noteFilter === 'not-in-note') return !v.inNote;
     return true;
@@ -290,6 +293,11 @@ export default function Library() {
           {photoCount > 0 && (
             <span style={{ color: 'var(--color-muted)', marginLeft: '8px' }}>
               · {photoCount} photo post{photoCount !== 1 ? 's' : ''} hidden
+            </span>
+          )}
+          {!showAccountPulls && accountPullCount > 0 && (
+            <span style={{ color: 'var(--color-muted)', marginLeft: '8px' }}>
+              · {accountPullCount} account pull{accountPullCount !== 1 ? 's' : ''} hidden
             </span>
           )}
         </span>
@@ -315,6 +323,22 @@ export default function Library() {
               {f === 'all' ? 'All' : f === 'in-note' ? 'In a note' : 'Not in a note'}
             </button>
           ))}
+          <button
+            onClick={() => setShowAccountPulls((v) => !v)}
+            style={{
+              fontFamily: 'var(--font-mono)',
+              fontSize: '8px',
+              letterSpacing: '0.06em',
+              textTransform: 'uppercase',
+              padding: '4px 10px',
+              border: 'var(--border)',
+              background: showAccountPulls ? 'var(--color-black)' : 'transparent',
+              color: showAccountPulls ? 'var(--color-white)' : 'var(--color-black)',
+              cursor: 'pointer',
+            }}
+          >
+            {showAccountPulls ? 'Hide Account Pulls' : 'Show Account Pulls'}
+          </button>
         </div>
 
         <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
