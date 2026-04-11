@@ -97,7 +97,7 @@ function platformForUrl(url) {
  */
 async function withCookieArgs(url, fn) {
   const platform = platformForUrl(url);
-  const impersonateArgs = platform ? ['--impersonate', 'chrome'] : [];
+  const impersonateArgs = platform ? ['--impersonate', 'Chrome-133'] : [];
 
   // First attempt: no cookies, impersonate Chrome
   try {
