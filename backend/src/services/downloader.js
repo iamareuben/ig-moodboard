@@ -95,6 +95,9 @@ function platformForUrl(url) {
  * a Chrome TLS fingerprint with session cookies from a different browser can
  * cause IG to reject the request.
  */
+const isImpersonateUnavailable = (err) =>
+  /Impersonate target .* is not available/i.test(err.message);
+
 async function withCookieArgs(url, fn) {
   const platform = platformForUrl(url);
   const impersonateArgs = platform ? ['--impersonate', 'Chrome-133'] : [];
@@ -105,7 +108,19 @@ async function withCookieArgs(url, fn) {
     if (platform) clearCookieStatus(platform);
     return result;
   } catch (err) {
-    if (!platform || !needsCookies(err)) throw err;
+    // If this yt-dlp build doesn't support the impersonate target, retry without it
+    if (isImpersonateUnavailable(err)) {
+      console.warn('[downloader] Chrome-133 impersonation unavailable — retrying without --impersonate');
+      try {
+        const result = await fn([]);
+        if (platform) clearCookieStatus(platform);
+        return result;
+      } catch (retryErr) {
+        if (!platform || !needsCookies(retryErr)) throw retryErr;
+      }
+    } else if (!platform || !needsCookies(err)) {
+      throw err;
+    }
   }
 
   // Login/rate-limit — try with stored cookies (no --impersonate, cookies carry the session).
