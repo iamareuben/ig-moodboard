@@ -49,6 +49,9 @@ function detectPlatform(url) {
       if (/\/photo\//.test(u.pathname)) return null;
       return 'tiktok';
     }
+    if (host === 'facebook.com' && u.pathname.startsWith('/ads/library') && u.searchParams.get('id')) {
+      return 'facebook';
+    }
     return null;
   } catch {
     return null;
@@ -138,7 +141,7 @@ router.post('/', async (req, res) => {
 
   const platform = detectPlatform(url);
   if (!platform) {
-    return res.status(400).json({ error: 'Unsupported URL — must be an Instagram or TikTok video link (TikTok photo posts are not supported)' });
+    return res.status(400).json({ error: 'Unsupported URL — must be an Instagram, TikTok, or Facebook Ad Library link (TikTok photo posts are not supported)' });
   }
 
   // Dedup check

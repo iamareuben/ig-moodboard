@@ -5,7 +5,9 @@ function validateUrl(url) {
   try {
     const u = new URL(url);
     const host = u.hostname.replace(/^www\./, '');
-    return host === 'instagram.com' || host === 'tiktok.com';
+    if (host === 'instagram.com' || host === 'tiktok.com') return true;
+    if (host === 'facebook.com' && u.pathname.startsWith('/ads/library') && u.searchParams.get('id')) return true;
+    return false;
   } catch {
     return false;
   }
@@ -24,7 +26,7 @@ export default function AddVideoModal({ onSuccess, onClose }) {
     e.preventDefault();
     setError('');
     if (!validateUrl(url)) {
-      setError('Please enter a valid Instagram or TikTok URL');
+      setError('Please enter a valid Instagram, TikTok, or Facebook Ad Library URL');
       return;
     }
     setSubmitting(true);
@@ -112,7 +114,7 @@ export default function AddVideoModal({ onSuccess, onClose }) {
           <form onSubmit={handleUrlSubmit}>
             <input
               type="url"
-              placeholder="https://www.instagram.com/reel/..."
+              placeholder="Instagram, TikTok, or facebook.com/ads/library/?id=..."
               value={url}
               onChange={(e) => setUrl(e.target.value)}
               autoFocus

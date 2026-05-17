@@ -85,6 +85,7 @@ function runProcess(cmd, args) {
 function platformForUrl(url) {
   if (url.includes('tiktok.com')) return 'tiktok';
   if (url.includes('instagram.com')) return 'instagram';
+  if (url.includes('facebook.com')) return 'facebook';
   return null;
 }
 
@@ -220,12 +221,16 @@ export async function downloadCarousel(url, framesDir) {
 }
 
 export async function downloadVideo(url, outputPath) {
+  // FB Ad Library URLs are playlists (one ad = multiple creatives); grab just the first.
+  const playlistArgs = url.includes('facebook.com/ads/library')
+    ? ['--playlist-items', '1']
+    : ['--no-playlist'];
   await withCookieArgs(url, (cookieArgs) =>
     runProcess('yt-dlp', [
       ...cookieArgs,
       '-f', 'mp4/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
       '--merge-output-format', 'mp4',
-      '--no-playlist',
+      ...playlistArgs,
       '--max-filesize', '500m',
       '-o', outputPath,
       url,
@@ -251,16 +256,19 @@ export async function getVideoDuration(videoPath) {
  */
 export async function getVideoMetadata(url) {
   try {
+    const isFbAd = url.includes('facebook.com/ads/library');
+    const playlistArgs = isFbAd ? ['--playlist-items', '1'] : ['--no-playlist'];
     const { stdout } = await withCookieArgs(url, (cookieArgs) =>
       runProcess('yt-dlp', [
         ...cookieArgs,
         '--dump-json',
         '--skip-download',
-        '--no-playlist',
+        ...playlistArgs,
         url,
       ])
     );
-    const raw = JSON.parse(stdout);
+    // yt-dlp may emit multiple JSON lines for playlists; take the first
+    const raw = JSON.parse(stdout.trim().split('\n')[0]);
 
     // Collaborators: IG collab posts expose an array of objects with a username field
     const rawCollabs = Array.isArray(raw.collaborators) ? raw.collaborators : [];
@@ -268,10 +276,19 @@ export async function getVideoMetadata(url) {
       .map((c) => (typeof c === 'string' ? c : c?.username))
       .filter(Boolean);
 
+    // For FB ads, use the playlist_id (the ad ID) as the canonical identifier
+    const canonicalId = (() => {
+      if (raw.extractor_key === 'FacebookAds') {
+        const adId = raw.playlist_id || raw.id?.replace(/_\d+$/, '');
+        return adId ? `facebook:ad:${adId}` : null;
+      }
+      return raw.id ? `${raw.extractor_key?.toLowerCase() || 'unknown'}:${raw.id}` : null;
+    })();
+
     return {
       title: raw.title || raw.fulltitle || '',
       description: raw.description || '',
-      canonicalId: raw.id ? `${raw.extractor_key?.toLowerCase() || 'unknown'}:${raw.id}` : null,
+      canonicalId,
       webpageUrl: raw.webpage_url || url,
       uploaderUsername: (() => {
         const uid = raw.uploader_id?.replace(/^@/, '');
@@ -287,7 +304,7 @@ export async function getVideoMetadata(url) {
         }
         return uid || null;
       })(),
-      uploaderDisplayName: raw.uploader || raw.channel || null,
+      uploaderDisplayName: raw.uploader || raw.channel || raw.playlist_uploader || null,
       thumbnailUrl: raw.thumbnail || null,
       uploaderUserId: (() => {
         const uid = raw.uploader_id;

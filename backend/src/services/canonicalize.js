@@ -1,5 +1,5 @@
 /**
- * Extract a stable canonical ID from an IG or TikTok URL for deduplication.
+ * Extract a stable canonical ID from an IG, TikTok, or Facebook Ad Library URL for deduplication.
  * Returns { platform, canonicalId, normalizedUrl } or null if not recognized.
  */
 export function canonicalizeUrl(rawUrl) {
@@ -61,6 +61,19 @@ export function canonicalizeUrl(rawUrl) {
       canonicalId: null,
       normalizedUrl: null,
     };
+  }
+
+  // Facebook Ad Library: facebook.com/ads/library/?id=<AD_ID>
+  if (host === 'facebook.com') {
+    const adId = u.searchParams.get('id');
+    if (adId && u.pathname.startsWith('/ads/library')) {
+      return {
+        platform: 'facebook',
+        canonicalId: `facebook:ad:${adId}`,
+        normalizedUrl: `https://www.facebook.com/ads/library/?id=${adId}`,
+      };
+    }
+    return null;
   }
 
   return null;
