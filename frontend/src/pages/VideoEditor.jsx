@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { getVideo, updateVideo, addShot, updateShot, deleteShot, parseAccount, retryVideo, archiveVideo, listVideos, transcribeVideo } from '../api.js';
+import { getVideo, updateVideo, addShot, updateShot, deleteShot, parseAccount, retryVideo, archiveVideo, listVideos, transcribeVideo, exportVideoZipUrl } from '../api.js';
 import ShotGrid from '../components/ShotGrid.jsx';
 import CardPreview from '../components/CardPreview.jsx';
 import ShotModal from '../components/ShotModal.jsx';
@@ -26,6 +26,7 @@ export default function VideoEditor() {
   const [transcribing, setTranscribing] = useState(false);
   const [showTranscript, setShowTranscript] = useState(false);
   const [transcriptError, setTranscriptError] = useState(null);
+  const [exporting, setExporting] = useState(false);
 
   const fetchVideo = useCallback(async () => {
     try {
@@ -116,6 +117,32 @@ export default function VideoEditor() {
       setTranscriptError(err.message);
     } finally {
       setTranscribing(false);
+    }
+  }
+
+  async function handleExport() {
+    setExporting(true);
+    try {
+      const url = exportVideoZipUrl(id);
+      const res = await fetch(url);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: 'Export failed' }));
+        alert(`Export failed: ${err.error || 'Unknown error'}`);
+        return;
+      }
+      const blob = await res.blob();
+      const safeTitle = (video.title || id).replace(/[^a-z0-9_\-]/gi, '_').slice(0, 60);
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `${safeTitle}_export.zip`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+      // Refresh video in case transcript was generated during export
+      await fetchVideo();
+    } catch (err) {
+      alert(`Export failed: ${err.message}`);
+    } finally {
+      setExporting(false);
     }
   }
 
@@ -290,6 +317,14 @@ export default function VideoEditor() {
               </button>
             )}
             <button style={{ flexShrink: 0 }} onClick={() => setShowCard(true)}>Card Preview</button>
+            <button
+              style={{ flexShrink: 0 }}
+              onClick={handleExport}
+              disabled={exporting}
+              title="Download ZIP with shots + transcript"
+            >
+              {exporting ? 'Exporting…' : 'Export ZIP'}
+            </button>
           </>
         )}
 

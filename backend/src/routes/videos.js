@@ -5,6 +5,7 @@ import { constants } from 'fs';
 import multer from 'multer';
 import { join } from 'path';
 import { tmpdir } from 'os';
+import archiver from 'archiver';
 import {
   initVideoDir,
   readManifest,
@@ -21,6 +22,8 @@ import { canonicalizeUrl, extractAccountFromUrl } from '../services/canonicalize
 import { getNotesForVideo, getVideoIdsInNotes, upsertAccount } from '../services/db.js';
 import { downloadAndProcess } from '../services/pipeline.js';
 import { transcribeVideo } from '../services/transcriber.js';
+
+const VINSPO_BASE = 'https://vinspo.iamareuben.xyz';
 
 const upload = multer({
   storage: multer.diskStorage({
@@ -513,6 +516,112 @@ router.post('/:id/transcribe', async (req, res) => {
     res.json(manifest.transcript);
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/videos/:id/export — download ZIP with JSON manifest + shot images
+router.get('/:id/export', async (req, res) => {
+  try {
+    let manifest = await readManifest(req.params.id);
+
+    if (manifest.status !== 'ready') {
+      return res.status(400).json({ error: 'Video is not ready' });
+    }
+
+    // Auto-transcribe if missing
+    if (!manifest.transcript && !manifest.isCarousel) {
+      try {
+        const vFile = videoFile(req.params.id);
+        const result = await transcribeVideo(vFile);
+        manifest.transcript = { ...result, createdAt: new Date().toISOString() };
+        await writeManifest(req.params.id, manifest);
+      } catch (err) {
+        console.error(`[export] transcription failed for ${req.params.id}:`, err.message);
+      }
+    }
+
+    const shots = manifest.shots || [];
+    const duration = manifest.duration || 0;
+    const segments = manifest.transcript?.segments || [];
+
+    // Map each shot to its time window and overlapping transcript segments
+    const shotsWithTranscript = shots.map((shot, i) => {
+      const startTime = shot.timestamp;
+      const endTime = i < shots.length - 1 ? shots[i + 1].timestamp : duration;
+      const transcriptSegments = segments
+        .filter((seg) => seg.end > startTime && seg.start < endTime)
+        .map((seg) => ({
+          start: seg.start,
+          end: seg.end,
+          text: seg.text.trim(),
+        }));
+      return {
+        id: shot.id,
+        index: i + 1,
+        startTime,
+        endTime,
+        isHero: shot.id === manifest.heroShotId,
+        label: shot.label || '',
+        tags: shot.tags || [],
+        frameFile: shot.frameFile,
+        transcriptSegments,
+      };
+    });
+
+    const exportJson = {
+      exportedAt: new Date().toISOString(),
+      video: {
+        id: manifest.id,
+        title: manifest.title || '',
+        platform: manifest.platform,
+        originalUrl: manifest.url || null,
+        vinspoDeepLink: `${VINSPO_BASE}/video/${manifest.id}`,
+        downloadedAt: manifest.downloadedAt,
+        duration: manifest.duration,
+        creator: {
+          username: manifest.accountUsername || null,
+          displayName: manifest.accountDisplayName || null,
+          accountId: manifest.accountId || null,
+        },
+        stats: manifest.stats || null,
+        tags: manifest.tags || [],
+      },
+      transcript: manifest.transcript
+        ? {
+            language: manifest.transcript.language,
+            text: manifest.transcript.text,
+            segments: manifest.transcript.segments || [],
+          }
+        : null,
+      shots: shotsWithTranscript,
+    };
+
+    const safeTitle = (manifest.title || manifest.id).replace(/[^a-z0-9_\-]/gi, '_').slice(0, 60);
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="${safeTitle}_export.zip"`);
+
+    const archive = archiver('zip', { zlib: { level: 6 } });
+    archive.on('error', (err) => { throw err; });
+    archive.pipe(res);
+
+    archive.append(JSON.stringify(exportJson, null, 2), { name: 'manifest.json' });
+
+    for (const shot of shotsWithTranscript) {
+      const ms = Math.round(shot.startTime * 1000);
+      const fPath = frameFile(req.params.id, ms);
+      try {
+        await access(fPath, constants.F_OK);
+        archive.file(fPath, { name: `shots/shot_${String(shot.index).padStart(3, '0')}.jpg` });
+      } catch {
+        // frame missing — skip
+      }
+    }
+
+    await archive.finalize();
+  } catch (err) {
+    if (!res.headersSent) {
+      res.status(500).json({ error: err.message });
+    }
   }
 });
 

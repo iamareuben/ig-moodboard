@@ -344,6 +344,10 @@ export async function transcribeVideo(id) {
   return res.json();
 }
 
+export function exportVideoZipUrl(id) {
+  return `${BASE}/videos/${id}/export`;
+}
+
 export async function getCookieStatus() {
   const res = await fetch(`${BASE}/settings/cookies/status`);
   if (!res.ok) return {};
