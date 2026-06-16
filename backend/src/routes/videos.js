@@ -5,7 +5,9 @@ import { constants } from 'fs';
 import multer from 'multer';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import archiver from 'archiver';
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+const archiver = require('archiver');
 import {
   initVideoDir,
   readManifest,
