@@ -73,6 +73,55 @@ db.exec(`
   );
 
   CREATE INDEX IF NOT EXISTS note_history_by_note ON note_history(note_id);
+
+  CREATE TABLE IF NOT EXISTS meta_connection (
+    id TEXT PRIMARY KEY DEFAULT 'default',
+    account_id TEXT,
+    page_id TEXT,
+    page_name TEXT,
+    ig_user_id TEXT,
+    ig_username TEXT,
+    access_token TEXT,
+    token_expires_at TEXT,
+    connected_at TEXT,
+    updated_at TEXT
+  );
+
+  CREATE TABLE IF NOT EXISTS ig_media (
+    id TEXT PRIMARY KEY,
+    account_id TEXT,
+    manifest_id TEXT,
+    permalink TEXT,
+    caption TEXT,
+    media_type TEXT,
+    media_product_type TEXT,
+    posted_at TEXT,
+    thumbnail_url TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS ig_media_by_account ON ig_media(account_id);
+  CREATE INDEX IF NOT EXISTS ig_media_by_manifest ON ig_media(manifest_id);
+  CREATE INDEX IF NOT EXISTS ig_media_by_posted_at ON ig_media(posted_at);
+
+  CREATE TABLE IF NOT EXISTS ig_media_insights (
+    id TEXT PRIMARY KEY,
+    media_id TEXT NOT NULL,
+    fetched_at TEXT NOT NULL,
+    metrics TEXT NOT NULL,
+    FOREIGN KEY (media_id) REFERENCES ig_media(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS ig_media_insights_by_media ON ig_media_insights(media_id, fetched_at);
+
+  CREATE TABLE IF NOT EXISTS ig_account_insights (
+    id TEXT PRIMARY KEY,
+    fetched_at TEXT NOT NULL,
+    metrics TEXT NOT NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS ig_account_insights_by_date ON ig_account_insights(fetched_at);
 `);
 
 // Migrate platform_cookies if it still uses the old single-column PK (no role column)
@@ -294,6 +343,157 @@ export function deleteCookies(platform, role = 'main') {
 
 export function listCookiePlatforms() {
   return db.prepare('SELECT platform, role, updated_at FROM platform_cookies').all();
+}
+
+// --- Meta (Instagram Graph API) connection ---
+
+export function upsertMetaConnection(fields) {
+  const now = new Date().toISOString();
+  const existing = db.prepare("SELECT * FROM meta_connection WHERE id = 'default'").get();
+  if (existing) {
+    const merged = { ...existing, ...fields, updated_at: now };
+    db.prepare(`
+      UPDATE meta_connection SET
+        account_id = ?, page_id = ?, page_name = ?, ig_user_id = ?, ig_username = ?,
+        access_token = ?, token_expires_at = ?, updated_at = ?
+      WHERE id = 'default'
+    `).run(
+      merged.account_id ?? null, merged.page_id ?? null, merged.page_name ?? null,
+      merged.ig_user_id ?? null, merged.ig_username ?? null,
+      merged.access_token ?? null, merged.token_expires_at ?? null, now
+    );
+  } else {
+    db.prepare(`
+      INSERT INTO meta_connection (id, account_id, page_id, page_name, ig_user_id, ig_username, access_token, token_expires_at, connected_at, updated_at)
+      VALUES ('default', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      fields.account_id ?? null, fields.page_id ?? null, fields.page_name ?? null,
+      fields.ig_user_id ?? null, fields.ig_username ?? null,
+      fields.access_token ?? null, fields.token_expires_at ?? null, now, now
+    );
+  }
+  return getMetaConnection();
+}
+
+export function getMetaConnection() {
+  return db.prepare("SELECT * FROM meta_connection WHERE id = 'default'").get() || null;
+}
+
+export function deleteMetaConnection() {
+  db.prepare("DELETE FROM meta_connection WHERE id = 'default'").run();
+}
+
+// --- IG media + insights ---
+
+export function upsertIgMedia({ id, account_id, manifest_id, permalink, caption, media_type, media_product_type, posted_at, thumbnail_url }) {
+  const now = new Date().toISOString();
+  const existing = db.prepare('SELECT id FROM ig_media WHERE id = ?').get(id);
+  if (existing) {
+    db.prepare(`
+      UPDATE ig_media SET
+        account_id = COALESCE(?, account_id),
+        manifest_id = COALESCE(?, manifest_id),
+        permalink = COALESCE(?, permalink),
+        caption = COALESCE(?, caption),
+        media_type = COALESCE(?, media_type),
+        media_product_type = COALESCE(?, media_product_type),
+        posted_at = COALESCE(?, posted_at),
+        thumbnail_url = COALESCE(?, thumbnail_url),
+        updated_at = ?
+      WHERE id = ?
+    `).run(account_id || null, manifest_id || null, permalink || null, caption || null, media_type || null, media_product_type || null, posted_at || null, thumbnail_url || null, now, id);
+  } else {
+    db.prepare(`
+      INSERT INTO ig_media (id, account_id, manifest_id, permalink, caption, media_type, media_product_type, posted_at, thumbnail_url, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, account_id || null, manifest_id || null, permalink || null, caption || null, media_type || null, media_product_type || null, posted_at || null, thumbnail_url || null, now, now);
+  }
+  return db.prepare('SELECT * FROM ig_media WHERE id = ?').get(id);
+}
+
+export function setIgMediaManifestId(id, manifestId) {
+  db.prepare('UPDATE ig_media SET manifest_id = ?, updated_at = ? WHERE id = ?').run(manifestId, new Date().toISOString(), id);
+}
+
+export function getIgMediaByManifestId(manifestId) {
+  return db.prepare('SELECT * FROM ig_media WHERE manifest_id = ?').get(manifestId);
+}
+
+export function insertMediaInsightSnapshot(mediaId, metrics) {
+  const id = crypto.randomUUID();
+  const now = new Date().toISOString();
+  db.prepare('INSERT INTO ig_media_insights (id, media_id, fetched_at, metrics) VALUES (?, ?, ?, ?)')
+    .run(id, mediaId, now, JSON.stringify(metrics));
+  return id;
+}
+
+export function getMediaInsightHistory(mediaId) {
+  return db.prepare('SELECT fetched_at, metrics FROM ig_media_insights WHERE media_id = ? ORDER BY fetched_at ASC')
+    .all(mediaId)
+    .map((r) => ({ fetchedAt: r.fetched_at, metrics: JSON.parse(r.metrics) }));
+}
+
+const MEDIA_SORT_METRICS = new Set([
+  'reach', 'views', 'likes', 'comments', 'shares', 'saved', 'total_interactions',
+  'follows', 'profile_visits', 'reposts', 'ig_reels_avg_watch_time',
+  'ig_reels_video_view_total_time', 'reels_skip_rate',
+]);
+
+export function listIgMediaWithLatestInsights({ accountId, sortBy, order = 'desc', mediaType, dateFrom, dateTo, limit } = {}) {
+  const params = [];
+  let sql = `
+    SELECT m.*, latest.metrics AS latest_metrics, latest.fetched_at AS latest_fetched_at
+    FROM ig_media m
+    LEFT JOIN (
+      SELECT i1.media_id, i1.metrics, i1.fetched_at
+      FROM ig_media_insights i1
+      WHERE i1.fetched_at = (SELECT MAX(i2.fetched_at) FROM ig_media_insights i2 WHERE i2.media_id = i1.media_id)
+    ) latest ON latest.media_id = m.id
+    WHERE 1=1
+  `;
+  if (accountId) { sql += ' AND m.account_id = ?'; params.push(accountId); }
+  if (mediaType) { sql += ' AND m.media_type = ?'; params.push(mediaType); }
+  if (dateFrom) { sql += ' AND m.posted_at >= ?'; params.push(dateFrom); }
+  if (dateTo) { sql += ' AND m.posted_at <= ?'; params.push(dateTo); }
+
+  const dir = order === 'asc' ? 'ASC' : 'DESC';
+  if (sortBy && MEDIA_SORT_METRICS.has(sortBy)) {
+    sql += ` ORDER BY json_extract(latest.metrics, '$.${sortBy}') ${dir}`;
+  } else {
+    sql += ` ORDER BY m.posted_at ${dir}`;
+  }
+  if (limit) { sql += ' LIMIT ?'; params.push(limit); }
+
+  return db.prepare(sql).all(...params).map((row) => ({
+    ...row,
+    latestMetrics: row.latest_metrics ? JSON.parse(row.latest_metrics) : null,
+  }));
+}
+
+export function getIgMedia(id) {
+  return db.prepare('SELECT * FROM ig_media WHERE id = ?').get(id);
+}
+
+export function listAllIgMediaIds(accountId) {
+  return new Set(db.prepare('SELECT id FROM ig_media WHERE account_id = ?').all(accountId).map((r) => r.id));
+}
+
+// --- Account-level insights ---
+
+export function insertAccountInsightSnapshot(metrics) {
+  const id = crypto.randomUUID();
+  const now = new Date().toISOString();
+  db.prepare('INSERT INTO ig_account_insights (id, fetched_at, metrics) VALUES (?, ?, ?)').run(id, now, JSON.stringify(metrics));
+  return id;
+}
+
+export function listAccountInsights({ dateFrom, dateTo } = {}) {
+  const params = [];
+  let sql = 'SELECT fetched_at, metrics FROM ig_account_insights WHERE 1=1';
+  if (dateFrom) { sql += ' AND fetched_at >= ?'; params.push(dateFrom); }
+  if (dateTo) { sql += ' AND fetched_at <= ?'; params.push(dateTo); }
+  sql += ' ORDER BY fetched_at ASC';
+  return db.prepare(sql).all(...params).map((r) => ({ fetchedAt: r.fetched_at, metrics: JSON.parse(r.metrics) }));
 }
 
 export default db;

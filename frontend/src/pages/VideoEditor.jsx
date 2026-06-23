@@ -5,6 +5,7 @@ import ShotGrid from '../components/ShotGrid.jsx';
 import CardPreview from '../components/CardPreview.jsx';
 import ShotModal from '../components/ShotModal.jsx';
 import TagInput from '../components/TagInput.jsx';
+import IgInsightsPanel from '../components/IgInsightsPanel.jsx';
 
 function formatTime(seconds) {
   const m = Math.floor(seconds / 60);
@@ -410,6 +411,9 @@ export default function VideoEditor() {
           )}
         </div>
       )}
+
+      {/* Instagram Graph API insights — only present for posts pulled via My Content */}
+      {video.igInsights && <IgInsightsPanel insights={video.igInsights} />}
 
       {/* Transcript panel */}
       {showTranscript && (

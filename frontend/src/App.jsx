@@ -7,6 +7,7 @@ import Notes from './pages/Notes.jsx';
 import NoteEditor from './pages/NoteEditor.jsx';
 import Accounts from './pages/Accounts.jsx';
 import AccountDetail from './pages/AccountDetail.jsx';
+import MyContent from './pages/MyContent.jsx';
 import Settings from './pages/Settings.jsx';
 import Login from './pages/Login.jsx';
 import SharedNote from './pages/SharedNote.jsx';
@@ -109,6 +110,7 @@ function Nav() {
           { to: '/', label: 'Videos' },
           { to: '/notes', label: 'Notes' },
           { to: '/accounts', label: 'Accounts' },
+          { to: '/my-content', label: 'My Content' },
           { to: '/settings', label: 'Settings' },
         ].map(({ to, label }) => (
           <NavLink
@@ -207,6 +209,7 @@ function AuthenticatedApp() {
         <Route path="/notes/:id" element={<NoteEditor />} />
         <Route path="/accounts" element={<Accounts />} />
         <Route path="/accounts/:id" element={<AccountDetail />} />
+        <Route path="/my-content" element={<MyContent />} />
         <Route path="/settings" element={<Settings />} />
       </Routes>
     </BrowserRouter>

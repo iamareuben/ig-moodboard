@@ -12,7 +12,10 @@ import settingsRouter from './routes/settings.js';
 import importBookmarksRouter from './routes/importBookmarks.js';
 import authRouter from './routes/auth.js';
 import shareRouter from './routes/share.js';
+import metaRouter from './routes/meta.js';
+import analyticsRouter from './routes/analytics.js';
 import { requireAuth } from './middleware/auth.js';
+import { scheduleMetaRefresh } from './services/metaSync.js';
 
 // Initialise DB (side-effect import creates tables)
 import './services/db.js';
@@ -60,6 +63,8 @@ app.use('/api/videos', videosRouter);
 app.use('/api/notes', notesRouter);
 app.use('/api/accounts', accountsRouter);
 app.use('/api/settings', settingsRouter);
+app.use('/api/meta', metaRouter);
+app.use('/api/analytics', analyticsRouter);
 
 app.listen(PORT, async () => {
   console.log(`Backend running on http://localhost:${PORT}`);
@@ -81,4 +86,7 @@ app.listen(PORT, async () => {
 
   // Schedule exponential-backoff retries for previously-failed downloads.
   await initRetryQueue();
+
+  // Schedule daily Instagram Graph API token refresh + insights sync.
+  scheduleMetaRefresh();
 });

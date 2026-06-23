@@ -21,7 +21,7 @@ import {
 import { extractFrameAtTime, detectShots } from '../services/shotDetector.js';
 import { getVideoDuration, getVideoMetadata } from '../services/downloader.js';
 import { canonicalizeUrl, extractAccountFromUrl } from '../services/canonicalize.js';
-import { getNotesForVideo, getVideoIdsInNotes, upsertAccount } from '../services/db.js';
+import { getNotesForVideo, getVideoIdsInNotes, upsertAccount, getIgMediaByManifestId, getMediaInsightHistory } from '../services/db.js';
 import { downloadAndProcess } from '../services/pipeline.js';
 import { transcribeVideo } from '../services/transcriber.js';
 
@@ -301,7 +301,11 @@ router.get('/:id', async (req, res) => {
   try {
     const manifest = await readManifest(req.params.id);
     const backlinks = getNotesForVideo(req.params.id);
-    res.json({ ...manifest, backlinks, annotationCount: manifest.annotations?.length ?? 0 });
+    const igMedia = getIgMediaByManifestId(req.params.id);
+    const igInsights = igMedia
+      ? { mediaType: igMedia.media_type, mediaProductType: igMedia.media_product_type, history: getMediaInsightHistory(igMedia.id) }
+      : null;
+    res.json({ ...manifest, backlinks, annotationCount: manifest.annotations?.length ?? 0, igInsights });
   } catch {
     res.status(404).json({ error: 'Video not found' });
   }

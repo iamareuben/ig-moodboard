@@ -22,6 +22,8 @@ jobs:
             context: ./backend
           - service: frontend
             context: ./frontend
+          - service: mcp
+            context: ./mcp
 
     steps:
       - name: Checkout repository

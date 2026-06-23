@@ -359,3 +359,69 @@ export async function refreshVideoStats(id) {
   if (!res.ok) throw new Error('Failed to refresh stats');
   return res.json();
 }
+
+// --- My Content (Instagram Graph API analytics) ---
+
+export const metaOauthStartUrl = `${BASE}/meta/oauth/start`;
+
+export async function getMetaStatus() {
+  const res = await fetch(`${BASE}/meta/status`);
+  if (!res.ok) throw new Error('Failed to get connection status');
+  return res.json();
+}
+
+export async function disconnectMeta() {
+  const res = await fetch(`${BASE}/meta/disconnect`, { method: 'POST' });
+  if (!res.ok) throw new Error('Failed to disconnect');
+  return res.json();
+}
+
+export async function startAnalyticsSync({ full, maxAgeDays } = {}) {
+  const res = await fetch(`${BASE}/analytics/sync`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ full: !!full, maxAgeDays: maxAgeDays || undefined }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || 'Failed to start sync');
+  }
+  return res.json(); // { jobId }
+}
+
+export async function getAnalyticsSyncStatus(jobId) {
+  const res = await fetch(`${BASE}/analytics/sync/${jobId}`);
+  if (!res.ok) throw new Error('Failed to get sync status');
+  return res.json();
+}
+
+export async function cancelAnalyticsSync(jobId) {
+  const res = await fetch(`${BASE}/analytics/sync/${jobId}`, { method: 'DELETE' });
+  if (!res.ok) throw new Error('Failed to cancel sync');
+  return res.json();
+}
+
+export async function listAnalyticsPosts({ sortBy, order, mediaType, dateFrom, dateTo, limit } = {}) {
+  const params = new URLSearchParams();
+  if (sortBy) params.set('sortBy', sortBy);
+  if (order) params.set('order', order);
+  if (mediaType) params.set('mediaType', mediaType);
+  if (dateFrom) params.set('dateFrom', dateFrom);
+  if (dateTo) params.set('dateTo', dateTo);
+  if (limit) params.set('limit', limit);
+  const res = await fetch(`${BASE}/analytics/posts?${params}`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || 'Failed to list posts');
+  }
+  return res.json();
+}
+
+export async function getAnalyticsTrend({ dateFrom, dateTo } = {}) {
+  const params = new URLSearchParams();
+  if (dateFrom) params.set('dateFrom', dateFrom);
+  if (dateTo) params.set('dateTo', dateTo);
+  const res = await fetch(`${BASE}/analytics/trend?${params}`);
+  if (!res.ok) throw new Error('Failed to load trend');
+  return res.json();
+}
