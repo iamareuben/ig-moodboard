@@ -74,7 +74,13 @@ router.get('/oauth/callback', async (req, res) => {
       token_expires_at: expiresAt,
     });
 
-    res.redirect((process.env.CORS_ORIGIN || 'http://localhost:5173') + '/my-content?connected=1');
+    // In production, frontend + backend are same-origin (nginx proxies /api internally), so
+    // CORS_ORIGIN is intentionally unset there — derive the origin from META_REDIRECT_URI
+    // instead of trusting proxy headers through the nginx+Cloudflare chain.
+    const frontendOrigin = process.env.CORS_ORIGIN
+      || (process.env.META_REDIRECT_URI && new URL(process.env.META_REDIRECT_URI).origin)
+      || `${req.protocol}://${req.get('host')}`;
+    res.redirect(frontendOrigin + '/my-content?connected=1');
   } catch (err) {
     console.error('[meta oauth] callback failed:', err.message);
     res.status(500).send(`Connection failed: ${err.message}`);
