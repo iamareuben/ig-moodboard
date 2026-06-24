@@ -172,7 +172,12 @@ export default function MyContent() {
         <span className="label">via {status.pageName}</span>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px' }}>
           {(!syncJob || syncJob.status !== 'running') && (
-            <button className="primary" onClick={() => handleSync(false)}>Sync Now</button>
+            <>
+              <button className="primary" onClick={() => handleSync(false)}>Sync Now</button>
+              <button onClick={() => handleSync(true)} title="Pull your entire lifetime post history, not just the last 60 days">
+                Full Backfill
+              </button>
+            </>
           )}
           {syncJob?.status === 'running' && <button onClick={handleCancelSync}>Cancel</button>}
           <button onClick={handleDisconnect}>Disconnect</button>

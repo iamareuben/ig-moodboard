@@ -68,7 +68,13 @@ export async function runMetaSync(job, { full = false, maxAgeDays = null } = {})
   // unbounded. Default incremental runs to a 60-day lookback unless the caller is explicit.
   // A genuine full historical backfill must pass full=true deliberately.
   const effectiveMaxAgeDays = maxAgeDays ?? (full ? null : 60);
-  const cutoffMs = effectiveMaxAgeDays ? Date.now() - effectiveMaxAgeDays * 24 * 60 * 60 * 1000 : null;
+  const relativeCutoffMs = effectiveMaxAgeDays ? Date.now() - effectiveMaxAgeDays * 24 * 60 * 60 * 1000 : null;
+
+  // ANALYTICS_MIN_DATE is a hard, absolute floor — never pull anything posted before this
+  // date, even on an explicit full=true backfill. Whichever cutoff is more recent wins.
+  const absoluteFloorMs = process.env.ANALYTICS_MIN_DATE ? new Date(process.env.ANALYTICS_MIN_DATE).getTime() : null;
+  const candidates = [relativeCutoffMs, absoluteFloorMs].filter((v) => v != null);
+  const cutoffMs = candidates.length > 0 ? Math.max(...candidates) : null;
 
   job.phase = 'listing';
   const allMedia = [];
