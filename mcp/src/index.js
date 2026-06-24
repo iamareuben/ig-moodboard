@@ -19,10 +19,6 @@ if (!AUTH_TOKEN) {
 const server = new McpServer({ name: 'ig-mood-story-board-analytics', version: '1.0.0' });
 registerTools(server);
 
-// Stateless transport — single shared instance, no per-session state needed for read-only tools.
-const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
-await server.connect(transport);
-
 const app = express();
 // curl/Claude Code bypass CORS entirely, but Claude Desktop/Claude.ai's connector runs in a
 // browser-like context that enforces it — without this, the preflight (or the fetch itself)
@@ -53,7 +49,12 @@ app.use('/mcp', (req, res, next) => {
 });
 
 app.all('/mcp', async (req, res) => {
+  // Stateless mode requires a fresh transport per request — reusing one across requests
+  // throws "Stateless transport cannot be reused across requests" on the second call.
+  const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+  res.on('close', () => transport.close());
   try {
+    await server.connect(transport);
     await transport.handleRequest(req, res, req.body);
   } catch (err) {
     console.error('[mcp] request failed:', err.message);
