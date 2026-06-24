@@ -68,6 +68,7 @@ export function registerOAuthRoutes(app, { baseUrl }) {
     }
     const clientId = randomUUID();
     clients.set(clientId, { redirect_uris, client_name: client_name || 'MCP Client' });
+    console.log(`[mcp:oauth] registered client "${client_name || 'MCP Client'}" (${clientId}), redirect_uris: ${redirect_uris.join(', ')}`);
     res.status(201).json({
       client_id: clientId,
       redirect_uris,
@@ -107,9 +108,11 @@ export function registerOAuthRoutes(app, { baseUrl }) {
     const { client_id, redirect_uri, state, code_challenge, code_challenge_method, password } = req.body || {};
     const client = clients.get(client_id);
     if (!client || !client.redirect_uris.includes(redirect_uri)) {
+      console.warn(`[mcp:oauth] authorize rejected — unknown client/redirect_uri (client_id: ${client_id})`);
       return res.status(400).send('Unknown client or redirect_uri');
     }
     if (password !== PASSWORD) {
+      console.warn(`[mcp:oauth] authorize rejected — wrong password (client: ${client.client_name})`);
       return res.status(401).send('Incorrect access token — go back and try again.');
     }
     const code = randomBytes(24).toString('hex');
@@ -119,6 +122,7 @@ export function registerOAuthRoutes(app, { baseUrl }) {
       codeChallenge: code_challenge,
       expiresAt: Date.now() + CODE_TTL_MS,
     });
+    console.log(`[mcp:oauth] authorized client "${client.client_name}" (${client_id}) — code issued`);
     const url = new URL(redirect_uri);
     url.searchParams.set('code', code);
     if (state) url.searchParams.set('state', state);
@@ -132,19 +136,23 @@ export function registerOAuthRoutes(app, { baseUrl }) {
       const { code, redirect_uri, code_verifier, client_id } = req.body;
       const entry = authCodes.get(code);
       if (!entry || entry.expiresAt < Date.now()) {
+        console.warn('[mcp:oauth] token exchange rejected — invalid or expired code');
         return res.status(400).json({ error: 'invalid_grant' });
       }
       authCodes.delete(code); // single use
       if (entry.redirectUri !== redirect_uri || entry.clientId !== client_id) {
+        console.warn('[mcp:oauth] token exchange rejected — redirect_uri/client_id mismatch');
         return res.status(400).json({ error: 'invalid_grant' });
       }
       if (entry.codeChallenge) {
         const computed = createHash('sha256').update(code_verifier || '').digest('base64url');
         if (computed !== entry.codeChallenge) {
+          console.warn('[mcp:oauth] token exchange rejected — PKCE verification failed');
           return res.status(400).json({ error: 'invalid_grant', error_description: 'PKCE verification failed' });
         }
       }
       const { accessToken, refreshToken } = issueTokens(client_id);
+      console.log(`[mcp:oauth] issued access token for client ${client_id}`);
       return res.json({
         access_token: accessToken,
         token_type: 'Bearer',
@@ -157,10 +165,12 @@ export function registerOAuthRoutes(app, { baseUrl }) {
       const { refresh_token, client_id } = req.body;
       const entry = refreshTokens.get(refresh_token);
       if (!entry || entry.clientId !== client_id) {
+        console.warn('[mcp:oauth] refresh rejected — invalid refresh_token/client_id');
         return res.status(400).json({ error: 'invalid_grant' });
       }
       refreshTokens.delete(refresh_token);
       const { accessToken, refreshToken } = issueTokens(client_id);
+      console.log(`[mcp:oauth] refreshed access token for client ${client_id}`);
       return res.json({
         access_token: accessToken,
         token_type: 'Bearer',

@@ -41,14 +41,22 @@ app.use('/mcp', (req, res, next) => {
   const token = header.startsWith('Bearer ') ? header.slice(7) : null;
   // Accept either the static bearer token (Claude Code, curl, direct integrations) or a
   // token issued via the OAuth flow above (Claude Desktop/Claude.ai).
-  if (token && (token === AUTH_TOKEN || isValidOAuthAccessToken(token))) {
+  if (token && token === AUTH_TOKEN) {
+    console.log(`[mcp] ${req.method} request authenticated via static bearer token`);
     return next();
   }
+  if (token && isValidOAuthAccessToken(token)) {
+    console.log(`[mcp] ${req.method} request authenticated via OAuth access token`);
+    return next();
+  }
+  console.warn(`[mcp] ${req.method} request rejected — ${token ? 'invalid token' : 'no Authorization header'}`);
   res.setHeader('WWW-Authenticate', `Bearer resource_metadata="${PUBLIC_URL}/.well-known/oauth-protected-resource"`);
   return res.status(401).json({ error: 'Unauthorized' });
 });
 
 app.all('/mcp', async (req, res) => {
+  const rpcMethod = req.body?.method;
+  console.log(`[mcp] ${req.method} /mcp${rpcMethod ? ` — jsonrpc method: ${rpcMethod}` : ''}`);
   // Stateless mode requires a fresh transport per request — reusing one across requests
   // throws "Stateless transport cannot be reused across requests" on the second call.
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
@@ -56,8 +64,9 @@ app.all('/mcp', async (req, res) => {
   try {
     await server.connect(transport);
     await transport.handleRequest(req, res, req.body);
+    console.log(`[mcp] ${req.method} /mcp${rpcMethod ? ` (${rpcMethod})` : ''} — completed, status ${res.statusCode}`);
   } catch (err) {
-    console.error('[mcp] request failed:', err.message);
+    console.error(`[mcp] ${req.method} /mcp${rpcMethod ? ` (${rpcMethod})` : ''} — failed:`, err.message);
     if (!res.headersSent) res.status(500).json({ error: 'Internal error' });
   }
 });
