@@ -1,4 +1,5 @@
 import express from 'express';
+import cors from 'cors';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { registerTools } from './tools.js';
@@ -23,6 +24,15 @@ const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefi
 await server.connect(transport);
 
 const app = express();
+// curl/Claude Code bypass CORS entirely, but Claude Desktop/Claude.ai's connector runs in a
+// browser-like context that enforces it — without this, the preflight (or the fetch itself)
+// fails silently client-side before our server ever sees a request to log.
+app.use(cors({
+  origin: true,
+  methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Mcp-Session-Id'],
+  exposedHeaders: ['Mcp-Session-Id'],
+}));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true })); // OAuth token endpoint + our own authorize form
 
