@@ -28,6 +28,7 @@ services:
     build: ./mcp
     environment:
       MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN:-}
+      MCP_PUBLIC_URL: ${MCP_PUBLIC_URL:-}
       DB_PATH: /app/data/db.sqlite
       VIDEOS_DIR: /app/data/videos
     volumes:
