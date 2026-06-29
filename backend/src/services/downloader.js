@@ -57,7 +57,9 @@ function needsCookies(err) {
     msg.includes('unavailable for certain audiences') ||
     msg.includes('may be inappropriate') ||
     msg.includes('blocked') ||
-    msg.includes('your IP')
+    msg.includes('your IP') ||
+    msg.includes('empty media response') ||
+    msg.includes('cookies-from-browser')
   );
 }
 
