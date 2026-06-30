@@ -4,7 +4,6 @@ import { access, unlink, rename } from 'fs/promises';
 import { constants } from 'fs';
 import multer from 'multer';
 import { join } from 'path';
-import { tmpdir } from 'os';
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const archiver = require('archiver');
@@ -27,9 +26,11 @@ import { transcribeVideo } from '../services/transcriber.js';
 
 const VINSPO_BASE = 'https://vinspo.iamareuben.xyz';
 
+// Write uploads directly into VIDEOS_DIR so rename() stays on the same filesystem
+// as the final destination (avoids EXDEV cross-device link errors with Docker volumes).
 const upload = multer({
   storage: multer.diskStorage({
-    destination: tmpdir(),
+    destination: VIDEOS_DIR,
     filename: (req, file, cb) => cb(null, `upload-${randomUUID()}.mp4`),
   }),
   limits: { fileSize: 500 * 1024 * 1024 }, // 500 MB
